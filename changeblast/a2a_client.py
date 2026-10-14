@@ -26,8 +26,11 @@ def _ints(value):
 
 async def discover(repo: str) -> dict:
     """Fetch the agent card. Returns a JSON-able summary for the trace."""
-    async with httpx.AsyncClient(timeout=5) as http:
-        card = await A2ACardResolver(http, agent_url(repo)).get_agent_card()
+    try:
+        async with httpx.AsyncClient(timeout=5) as http:
+            card = await A2ACardResolver(http, agent_url(repo)).get_agent_card()
+    except Exception as e:  # noqa: BLE001 - no card means no agent: missing coverage, not a crash
+        raise AgentUnavailable(f"{repo} agent card unavailable: {type(e).__name__}") from None
     return {"name": card.name, "url": card.supported_interfaces[0].url,
             "skills": [s.id for s in card.skills], "version": card.version}
 

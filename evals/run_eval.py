@@ -13,11 +13,21 @@ import sys
 import time
 from pathlib import Path
 
+import re
+
 import httpx
+
+from changeblast import repos
 
 API = "http://localhost:8100/api"
 KEY = json.loads((Path(__file__).parent / "answer_key.json").read_text())["scenarios"]
 REPOS = ["billing-service", "payments-service", "notification-service", "checkout-web", "shared-contracts"]
+
+
+def literal_baseline(change_request: str) -> set[tuple[str, str]]:
+    """What a developer greps first: the numbers and snake_case identifiers written in the request."""
+    terms = set(re.findall(r"\b\d+\b|\b[a-z]+(?:_[a-z]+)+\b", change_request))
+    return {(r, h["path"]) for r in REPOS for t in terms for h in repos.search(r, t)["hits"]}
 
 
 def score(report: dict, scenario: str) -> dict:
@@ -35,7 +45,8 @@ def score(report: dict, scenario: str) -> dict:
         "recall": round(len(hit) / len(required), 2),
         "precision": round(len(relevant) / len(reported), 2) if reported else 0.0,
         "citation_validity": round(len(valid) / len(report["findings"]), 2) if report["findings"] else 0.0,
-        "grep_baseline_recall": round(len(required & grep_files) / len(required), 2),
+        "literal_grep_recall": round(len(required & literal_baseline(key["change_request"])) / len(required), 2),
+        "llm_expanded_grep_recall": round(len(required & grep_files) / len(required), 2),
         "missed": sorted(f"{r}/{p}" for r, p in required - reported),
         "distractors_reported": sorted(f"{r}/{p}" for r, p in distractors & reported),
         "extra": sorted(f"{r}/{p}" for r, p in reported - required - optional),

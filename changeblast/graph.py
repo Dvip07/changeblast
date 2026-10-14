@@ -29,6 +29,7 @@ class State(TypedDict, total=False):
     constraints: dict
     intent: dict
     discovery: dict  # repo -> list of {term, path, line, text}
+    literal_baseline: dict  # repo -> files a plain grep for the request's own literals finds
     tasks: list[dict]
     results: Annotated[list[dict], operator.add]  # agent results from both rounds (parallel writers)
     follow_up_tasks: list[dict]
@@ -107,9 +108,13 @@ async def discover(state: State) -> State:
                     seen.add(key)
                     hits.append({"term": term, **h})
         discovery[repo] = hits
+    # Baseline for comparison: grep only for numbers and identifiers literally written in the request.
+    literals = set(re.findall(r"\b\d+\b|\b[a-z]+(?:_[a-z]+)+\b", state["change_request"]))
+    baseline = {repo: sorted({h["path"] for t in literals for h in repos.search(repo, t)["hits"]})
+                for repo in state["repositories"]}
     await store.event(state["investigation_id"], "discovery", "orchestrator", {
         repo: {"hits": len(h), "files": sorted({x["path"] for x in h})} for repo, h in discovery.items()})
-    return {"discovery": discovery}
+    return {"discovery": discovery, "literal_baseline": {"terms": sorted(literals), "files": baseline}}
 
 
 # --------------------------------------------------------------------------- plan + fan-out
@@ -431,6 +436,7 @@ async def report(state: State) -> State:
             "a2a_tasks": len(results),
             "tool_calls": sum(r.get("tool_calls") or 0 for r in results),
             "grep_baseline_files": {r: sorted({h["path"] for h in hits}) for r, hits in state["discovery"].items()},
+            "literal_baseline": state.get("literal_baseline", {}),
         },
         "warnings": state.get("warnings", []) + warnings,
         "agent_trace": [{k: r.get(k) for k in ("repo", "task_id", "round", "from_agent", "interface", "status",
