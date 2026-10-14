@@ -17,7 +17,7 @@ from changeblast.config import AGENT_MAX_TOOL_CALLS, ROOT
 class LLMUnavailable(Exception):
     """Safe message for agent failures (model error, refusal, or daily budget reached)."""
 
-PROMPT_VERSION = "repo-investigator-v4"
+PROMPT_VERSION = "repo-investigator-v5"
 
 IMPACT_TYPES = ["business_rule", "api_contract", "event_contract", "ui_behavior", "customer_copy",
                 "data_reporting", "test", "downstream_behavior", "config"]
@@ -36,10 +36,12 @@ FINDING_SCHEMA = {
         "evidence_excerpt": {"type": "string",
                              "description": "Text copied EXACTLY from the cited lines (no line-number prefix)"},
         "impact_type": {"type": "string", "enum": IMPACT_TYPES},
-        "impact_level": {"type": "string", "enum": ["must_change", "may_break", "reviewed_no_change"],
+        "impact_level": {"type": "string", "enum": ["must_change", "may_break", "reuse", "reviewed_no_change"],
                          "description": "must_change = edit required; may_break = behaviour/contract could break, "
-                                        "verify or add a regression test; reviewed_no_change = you checked it and "
-                                        "it is NOT affected (coverage evidence, not impact)"},
+                                        "verify or add a regression test; reuse = existing code the change must "
+                                        "call or build on, not edited (e.g. a helper that already computes a value "
+                                        "the new rule needs); reviewed_no_change = you checked it and it is NOT "
+                                        "affected (coverage evidence, not impact)"},
         "basis": {"type": "string", "enum": ["observed", "inferred"],
                   "description": "observed = you read the code that proves it; inferred = plausible but unproven"},
         "suggested_change": {"type": "string"},
@@ -102,6 +104,8 @@ How to work:
 - evidence_excerpt must be copied verbatim from the cited lines; it is machine-checked against the file.
 - Mark basis "inferred" when you have not read code that proves the claim. Never present guesses as observed.
 - Include tests that encode the current behaviour and will need updating.
+- If the change needs logic that already exists (a helper, setting, or query), report that code with
+  impact_level "reuse" so the implementation calls it instead of re-implementing it.
 - If you inspected a related location and concluded it needs no change, report it with impact_level
   "reviewed_no_change" so reviewers see it was checked. Don't label it must_change or may_break.
 - Do not report files that are unaffected just because they mention a related word.

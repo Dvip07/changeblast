@@ -17,6 +17,7 @@
 | Cross-agent follow-ups **routed by grep**, not by guessing | Built |
 | Answer key and scoring for precision, recall, and citation validity | Built (`evals/`) |
 | Read-only: no writes, no shell, no secret files, repo allowlist | Built |
+| **GitHub repos:** URL resolved by GitHub's official MCP server (read-only endpoint), cloned at the pinned SHA, indexed; private repos with a one-time token that is never stored | Built (ERPNext in 13 s, Twenty CRM in ~15 s) |
 | OPA, GitHub integration, tree-sitter indexing, running generated tests | Not built (see Roadmap) |
 
 ## Architecture

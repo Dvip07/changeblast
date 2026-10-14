@@ -146,7 +146,7 @@ Routing is **fixed by task type in code**, not decided by an LLM, so it's predic
 | 1 | Model router + caches + cost tracking | **Done.** $0.47 per run, down from ~$3; see Phase 1 results |
 | 2 | Indexer + quality score on the fixtures and one large open-source repo | **Done.** ERPNext indexed in 2.4 s, quality 73/100 |
 | 3 | Graph-based candidates + relevance gate + partitioned agents + graph MCP tools | **Done.** ERPNext investigations for about $0.20 |
-| 4 | GitHub ingestion (MCP metadata + clone at SHA) | Real repos |
+| 4 | GitHub ingestion (MCP metadata + clone at SHA) | **Done.** ERPNext in 13 s, Twenty CRM (38k files) in ~15 s |
 | 5 | Access code, spend cap, public pages | Safe to share |
 | 6 | AWS deploy | Live URL |
 | 7 | Re-run the eval on fixtures and a large repo, then update the README with the numbers | Proof |
@@ -236,6 +236,26 @@ Graph-based candidate selection, module partitions, the A2A agent host, graph MC
 - **`credits.py` in scenario A:** the graph ranks it 5th, but the agent puts the new rule in `policy.py` and doesn't report it. A judgment miss, not a selection miss.
 - **Noise partitions on ERPNext:** manufacturing and projects get agents that find nothing. Cheap (1 call each), but they should be screened.
 - **Few tool calls on ERPNext:** agents there use only 1–4 calls each; deeper exploration would likely find more tests.
+
+## Phase 4 results (done, 14 Oct 2026)
+
+GitHub ingestion (`changeblast/github.py`) is built and tested.
+
+**How it works:**
+- The URL is resolved through **GitHub's official MCP server**, using its hosted `/readonly` endpoint, so write tools aren't even exposed. It returns full name, default branch, head SHA, and visibility.
+- `git fetch --depth 1 origin <sha>`, then the SHA is verified, size limits are checked on the actual checkout (40k files / 1.5 GB), the checkout is moved into `repos/owner__repo`, and the repo is indexed.
+- A private repo's token travels only in git's environment (`http.extraHeader`), never in the remote URL or `.git/config`. The API takes it as a `SecretStr`, it isn't stored, and the UI clears it once sent.
+
+| Test | Result |
+|---|---|
+| `frappe/erpnext` | Ready in **13 s** (resolve + clone + index), pinned at `6551867` (same as GitHub), graph 73/100 |
+| `twentyhq/twenty` (TypeScript CRM) | Ready, 38,068 files, indexed in **14.4 s**, graph 71/100 |
+| Bad URL / missing repo / missing branch | HTTP 400 / "repository … not found, or the token can't read it" / "branch or ref … not found" |
+| Token hygiene | Token found in 0 files under `.git`, 0 API log lines, 0 database rows; remote URL is clean |
+
+**Bug fixed:** errors raised inside the MCP client's task group came back as an `ExceptionGroup`, so users saw "ExceptionGroup". They're unwrapped now.
+
+**New impact level `reuse`:** "code the change must call, not edit." In scenario A, `credits.py` is now reported as reuse ("the new 50% rule should call `credit_usage_ratio`"). **Scenario A: recall 1.0, precision 1.0, citation validity 1.0, $0.44.** That's one run; earlier runs varied between 0.9 and 1.0.
 
 ## Decisions (agreed 14 Oct 2026)
 

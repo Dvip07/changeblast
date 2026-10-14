@@ -33,7 +33,7 @@ export function ImpactGraph({ report, selected, onSelect }: {
 
   const level = (ids: string[] = []) => {
     const levels = ids.map((i) => byId[i]?.impact_level);
-    return levels.includes("must_change") ? "must_change" : "may_break";
+    return levels.includes("must_change") ? "must_change" : levels.includes("may_break") ? "may_break" : "reuse";
   };
   const status = (ids: string[] = []) => {
     const s = ids.map((i) => byId[i]?.evidence_status);
@@ -94,8 +94,8 @@ export function ImpactGraph({ report, selected, onSelect }: {
           return (
             <g key={n.id} onClick={() => onSelect(n.id)} style={{ cursor: "pointer" }}>
               <rect x={p.x} y={p.y} width={BOX_W} height={BOX_H} rx={7}
-                fill={selected === n.id ? "#e9edfb" : lv === "must_change" ? "#fff1ef" : "#fff8ea"}
-                stroke={selected === n.id ? "#3550c8" : lv === "must_change" ? "#d9776b" : "#d8a54a"}
+                fill={selected === n.id ? "#e9edfb" : lv === "must_change" ? "#fff1ef" : lv === "may_break" ? "#fff8ea" : "#eef5fc"}
+                stroke={selected === n.id ? "#3550c8" : lv === "must_change" ? "#d9776b" : lv === "may_break" ? "#d8a54a" : "#6a9bd1"}
                 strokeWidth={selected === n.id ? 2 : 1} strokeDasharray={inferredOnly ? "4 3" : undefined} />
               <text x={p.x + 8} y={p.y + 16} fontSize={11} fontFamily="ui-monospace, monospace" fill="#1b1b19">{short(n.label)}</text>
               <text x={p.x + 8} y={p.y + 30} fontSize={10} fill="#6a6a64">
@@ -109,6 +109,7 @@ export function ImpactGraph({ report, selected, onSelect }: {
       <div className="row muted" style={{ padding: "6px 10px", borderTop: "1px solid var(--line)" }}>
         <span><b style={{ color: "#d9776b" }}>■</b> must change</span>
         <span><b style={{ color: "#d8a54a" }}>■</b> may break</span>
+        <span><b style={{ color: "#6a9bd1" }}>■</b> reuse (call, don&apos;t edit)</span>
         <span><b style={{ color: "#3550c8" }}>—</b> references</span>
         <span><b style={{ color: "#8a3ffc" }}>—</b> consumed by (A2A follow-up)</span>
         <span>dashed = inferred only</span>

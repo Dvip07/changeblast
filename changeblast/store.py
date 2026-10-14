@@ -85,6 +85,19 @@ CREATE TABLE IF NOT EXISTS code_edges (
 );
 CREATE INDEX IF NOT EXISTS code_edges_dst ON code_edges (index_id, dst_path);
 CREATE INDEX IF NOT EXISTS code_edges_src ON code_edges (index_id, src_path);
+CREATE TABLE IF NOT EXISTS repo_ingests (
+  id TEXT PRIMARY KEY,
+  url TEXT NOT NULL,
+  full_name TEXT,
+  local_name TEXT,
+  commit_sha TEXT,
+  private BOOLEAN,
+  status TEXT NOT NULL,
+  info JSONB NOT NULL DEFAULT '{}',
+  error TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 CREATE OR REPLACE FUNCTION events_append_only() RETURNS trigger AS $$
 BEGIN RAISE EXCEPTION 'investigation_events is append-only'; END; $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS events_immutable ON investigation_events;

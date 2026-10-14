@@ -1,5 +1,5 @@
 export type EvidenceStatus = "verified" | "inferred" | "unverified";
-export type ImpactLevel = "must_change" | "may_break" | "reviewed_no_change";
+export type ImpactLevel = "must_change" | "may_break" | "reuse" | "reviewed_no_change";
 
 export type Finding = {
   finding_id: string;

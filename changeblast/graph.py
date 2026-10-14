@@ -324,7 +324,7 @@ async def validate(state: State) -> State:
             dup.setdefault("corroborated_by", []).append({"finding_id": f["finding_id"], "claim": f["claim"],
                                                           "round": f["round"]})
             dup["downstream_refs"] = sorted(set(dup["downstream_refs"]) | set(f["downstream_refs"]))
-            rank = {"must_change": 0, "may_break": 1, "reviewed_no_change": 2}
+            rank = {"must_change": 0, "may_break": 1, "reuse": 2, "reviewed_no_change": 3}
             if rank[f["impact_level"]] < rank[dup["impact_level"]]:
                 dup["impact_level"] = f["impact_level"]
             if dup["evidence_status"] != "verified" and f["evidence_status"] == "verified":
@@ -488,6 +488,7 @@ async def report(state: State) -> State:
             "unverified": sum(f["evidence_status"] == "unverified" for f in findings),
             "must_change": sum(f["impact_level"] == "must_change" for f in findings),
             "may_break": sum(f["impact_level"] == "may_break" for f in findings),
+            "reuse": sum(f["impact_level"] == "reuse" for f in findings),
             "reviewed_no_change": sum(f["impact_level"] == "reviewed_no_change" for f in findings),
             "services_touched": state["impact_graph"]["services_touched"],
             "a2a_tasks": len(results),

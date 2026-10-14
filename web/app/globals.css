@@ -44,6 +44,7 @@ code { word-break: break-all; }
 .s-running, .s-RESUMING, .s-INDEXING, .s-INVESTIGATING, .s-RECONCILING, .s-REPORTING, .s-CREATED { background: var(--accent-soft); color: var(--accent); }
 .l-must_change { background: #fde7e4; color: #a3271a; }
 .l-may_break { background: var(--warn-soft); color: var(--warn); }
+.l-reuse { background: #e8f1fb; color: #1f5f9e; }
 .l-reviewed_no_change { background: var(--soft); color: var(--muted); }
 .stepper { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 10px; }
 .step { padding: 3px 10px; border-radius: 99px; font-size: 11px; font-weight: 600; background: var(--soft); color: var(--muted); }

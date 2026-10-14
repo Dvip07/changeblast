@@ -16,7 +16,8 @@ const ERP_SCENARIOS = [
   { label: "E2. Rename credit_days", text: "Rename the credit_days field on Payment Term to credit_period_days." },
 ];
 
-type Repo = { name: string; commit: string; files: number; kind: "fixture" | "cloned" };
+type Repo = { name: string; display_name: string; commit: string; files: number; kind: "fixture" | "github"; quality: number | null };
+type Ingest = { id: string; status: string; full_name: string | null; error: string | null; info: Record<string, any> };
 type Recent = { id: string; change_request: string; status: string; created_at: string };
 
 export default function Setup() {
@@ -28,6 +29,33 @@ export default function Setup() {
   const [recent, setRecent] = useState<Recent[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [ghUrl, setGhUrl] = useState("");
+  const [ghToken, setGhToken] = useState("");
+  const [ingest, setIngest] = useState<Ingest | null>(null);
+
+  const loadRepos = () => api<Repo[]>("/repositories").then(setRepos).catch((e) => setError(e.message));
+
+  async function addRepo() {
+    setError("");
+    try {
+      const r = await api<{ ingest_id: string }>("/repositories", {
+        method: "POST", body: JSON.stringify({ url: ghUrl, token: ghToken || null }),
+      });
+      setGhToken("");  // drop the token from the page as soon as it's sent
+      let st: Ingest;
+      do {
+        await new Promise((res) => setTimeout(res, 1500));
+        st = await api<Ingest>(`/repositories/ingests/${r.ingest_id}`);
+        setIngest(st);
+      } while (!["ready", "failed"].includes(st.status));
+      if (st.status === "ready") {
+        await loadRepos();
+        setSelected([st.info.name]);
+      }
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
 
   useEffect(() => {
     api<Repo[]>("/repositories").then((r) => { setRepos(r); setSelected(r.filter((x) => x.kind === "fixture").map((x) => x.name)); }).catch((e) => setError(e.message));
@@ -64,21 +92,40 @@ export default function Setup() {
           <span className="muted">Seeded scenarios:</span>
           {SCENARIOS.map((s) => <button key={s.label} onClick={() => { setText(s.text); setSelected(repos.filter((r) => r.kind === "fixture").map((r) => r.name)); }}>{s.label}</button>)}
         </div>
-        {repos.some((r) => r.name === "erpnext") && (
+        {repos.some((r) => r.display_name.endsWith("erpnext")) && (
           <div className="row" style={{ marginTop: 6 }}>
             <span className="muted">ERPNext (large repo):</span>
-            {ERP_SCENARIOS.map((s) => <button key={s.label} onClick={() => { setText(s.text); setSelected(["erpnext"]); }}>{s.label}</button>)}
+            {ERP_SCENARIOS.map((s) => <button key={s.label} onClick={() => { setText(s.text); setSelected(repos.filter((r) => r.display_name.endsWith("erpnext")).map((r) => r.name)); }}>{s.label}</button>)}
           </div>
         )}
         <h2 style={{ marginTop: 16 }}>Repositories</h2>
         {repos.map((r) => (
           <label key={r.name} className="row" style={{ marginBottom: 4 }}>
             <input type="checkbox" checked={selected.includes(r.name)} onChange={() => toggle(r.name)} />
-            <b>{r.name}</b> <code className="muted">@{r.commit.slice(0, 7)}</code>
+            <b>{r.display_name}</b> <code className="muted">@{r.commit.slice(0, 7)}</code>
             <span className="muted">{r.files.toLocaleString()} files</span>
-            {r.kind === "cloned" && <span className="badge">GitHub clone</span>}
+            {r.kind === "github" && <span className="badge">GitHub</span>}
+            {r.quality != null && <span className="badge" title="Code-graph quality score">graph {r.quality}/100</span>}
           </label>
         ))}
+        <details style={{ marginTop: 10 }}>
+          <summary><b>Add a GitHub repository</b> <span className="muted">(cloned at a pinned commit, then indexed)</span></summary>
+          <div style={{ marginTop: 8 }}>
+            <input style={{ width: "100%", padding: 8, border: "1px solid var(--line)", borderRadius: 7, font: "inherit" }}
+              placeholder="https://github.com/owner/repo" value={ghUrl} onChange={(e) => setGhUrl(e.target.value)} />
+            <input type="password" autoComplete="off" style={{ width: "100%", marginTop: 6, padding: 8, border: "1px solid var(--line)", borderRadius: 7, font: "inherit" }}
+              placeholder="Read-only token (private repos only)" value={ghToken} onChange={(e) => setGhToken(e.target.value)} />
+            <p className="muted" style={{ margin: "6px 0" }}>The token is used once to clone and is never stored or logged.
+              Code from the repository is sent to Anthropic and OpenRouter models during investigations.</p>
+            <div className="row">
+              <button onClick={addRepo} disabled={!ghUrl || (!!ingest && !["ready", "failed"].includes(ingest.status))}>Add repository</button>
+              {ingest && <span className={`pill s-${ingest.status === "ready" ? "COMPLETED" : ingest.status === "failed" ? "FAILED" : "INDEXING"}`}>
+                {ingest.status}{ingest.full_name ? ` · ${ingest.full_name}` : ""}{ingest.info?.sha ? ` @${String(ingest.info.sha).slice(0, 7)}` : ""}
+                {ingest.status === "ready" && ingest.info?.quality != null ? ` · graph ${ingest.info.quality}/100` : ""}</span>}
+              {ingest?.error && <span className="error">{ingest.error}</span>}
+            </div>
+          </div>
+        </details>
         <h2 style={{ marginTop: 16 }}>Constraints</h2>
         <label className="row"><input type="checkbox" checked={compat} onChange={(e) => setCompat(e.target.checked)} /> Backward compatible</label>
         <label className="row"><input type="checkbox" checked disabled /> Read-only (agents cannot modify code)</label>

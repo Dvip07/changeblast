@@ -5,11 +5,12 @@ import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Header, HTTPException
+from psycopg.types.json import Jsonb
 from fastapi.responses import PlainTextResponse
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 
-from changeblast import graph as workflow, indexer, repos, router, store
+from changeblast import github, graph as workflow, indexer, repos, router, store
 from changeblast.config import ROOT
 from changeblast.export import to_markdown
 
@@ -66,10 +67,79 @@ class NewInvestigation(BaseModel):
 
 
 @app.get("/api/repositories")
-def list_repositories():
+async def list_repositories():
     fixtures = {p.name for p in (ROOT / "fixtures").iterdir() if p.is_dir()}
-    return [{"name": r, "commit": repos.head_sha(r), "files": len(repos.list_files(r)),
-             "kind": "fixture" if r in fixtures else "cloned"} for r in repos.available_repos()]
+    out = []
+    for r in repos.available_repos():
+        idx = await indexer.get_index(r)
+        out.append({"name": r, "commit": repos.head_sha(r), "files": len(repos.list_files(r)),
+                    "kind": "fixture" if r in fixtures else "github",
+                    "display_name": r.replace("__", "/", 1) if r not in fixtures else r,
+                    "quality": idx["quality"]["overall"] if idx else None})
+    return out
+
+
+class NewRepository(BaseModel):
+    url: str = Field(min_length=10, max_length=300)
+    # Only for private repos. Used for this clone, then dropped: never stored, logged, or echoed back.
+    token: SecretStr | None = None
+
+
+async def _set_ingest(ingest_id: str, status: str, info: dict | None = None, error: str | None = None) -> None:
+    async with store.pool.connection() as conn:
+        await conn.execute(
+            "UPDATE repo_ingests SET status = %s, info = info || %s, error = %s, updated_at = now(), "
+            "full_name = COALESCE(%s, full_name), local_name = COALESCE(%s, local_name), "
+            "commit_sha = COALESCE(%s, commit_sha), private = COALESCE(%s, private) WHERE id = %s",
+            (status, Jsonb(info or {}), error, (info or {}).get("full_name"), (info or {}).get("name"),
+             (info or {}).get("sha"), (info or {}).get("private"), ingest_id))
+
+
+async def _run_ingest(ingest_id: str, url: str, token: str | None) -> None:
+    try:
+        result = await github.ingest(url, token, lambda st, info: _set_ingest(ingest_id, st, info))
+        await _set_ingest(ingest_id, "indexing", result)
+        idx = await indexer.ensure_index(result["name"])
+        await _set_ingest(ingest_id, "ready", {"quality": idx["quality"]["overall"], "stats": idx["stats"]})
+    except github.GitHubError as e:
+        await _set_ingest(ingest_id, "failed", error=str(e))
+    except Exception as e:  # noqa: BLE001
+        log.exception("ingest %s failed", ingest_id)
+        await _set_ingest(ingest_id, "failed", error=f"{type(e).__name__} while ingesting")
+    finally:
+        token = None  # noqa: F841 - drop the reference as soon as the clone is done
+
+
+@app.post("/api/repositories", status_code=202)
+async def add_repository(body: NewRepository):
+    try:
+        github.parse_url(body.url)
+    except github.GitHubError as e:
+        raise HTTPException(400, str(e)) from None
+    ingest_id = f"ing_{uuid.uuid4().hex[:10]}"
+    async with store.pool.connection() as conn:
+        await conn.execute("INSERT INTO repo_ingests (id, url, status) VALUES (%s, %s, 'queued')",
+                           (ingest_id, body.url.strip()))
+    token = body.token.get_secret_value() if body.token else None
+    task = asyncio.create_task(_run_ingest(ingest_id, body.url.strip(), token))
+    running.add(task)
+    task.add_done_callback(running.discard)
+    return {"ingest_id": ingest_id, "status": "queued"}
+
+
+@app.get("/api/repositories/ingests/{ingest_id}")
+async def get_ingest(ingest_id: str):
+    async with store.pool.connection() as conn:
+        row = await (await conn.execute(
+            "SELECT id, url, full_name, local_name, commit_sha, private, status, info, error, created_at, updated_at "
+            "FROM repo_ingests WHERE id = %s", (ingest_id,))).fetchone()
+    if not row:
+        raise HTTPException(404, "unknown ingest")
+    keys = ["id", "url", "full_name", "local_name", "commit", "private", "status", "info", "error", "created_at",
+            "updated_at"]
+    out = dict(zip(keys, row))
+    out["created_at"], out["updated_at"] = out["created_at"].isoformat(), out["updated_at"].isoformat()
+    return out
 
 
 indexing: dict[str, asyncio.Task] = {}
