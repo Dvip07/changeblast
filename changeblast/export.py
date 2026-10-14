@@ -41,6 +41,10 @@ def to_markdown(r: dict) -> str:
             out.append(f"- **{x['name']}** ({x['service']}, {x['kind']}): {x['description']} "
                        f"({cite(x['finding_ids'])})")
         out += ["", "## Open questions", ""] + [f"- {q}" for q in n["open_questions"]]
+    for ident, ref in (r.get("exact_references") or {}).items():
+        out += ["", f"## Every occurrence of `{ident}` (exact search, {len(ref['occurrences'])} lines in "
+                    f"{ref['files']} files{', truncated' if ref['truncated'] else ''})", ""]
+        out += [f"- `{o['repo']}/{o['path']}:{o['line']}` {o['text'][:120]}" for o in ref["occurrences"]]
     out += ["", "## Evidence", ""]
     for fid, f in by_id.items():
         out += [f"**`{fid}`** {f['repository']}@{f['commit_sha'][:7]} `{f['path']}:{f['line_start']}-"

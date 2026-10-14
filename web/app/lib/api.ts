@@ -40,7 +40,7 @@ export type Narrative = {
 
 export type TraceStep = { tool: string; input: Record<string, unknown>; chars: number };
 export type AgentRun = {
-  repo: string; task_id: string; round: string; from_agent: string; interface: string | null;
+  repo: string; agent_id?: string; scope?: string; task_id: string; round: string; from_agent: string; interface: string | null;
   status: string; error: string | null; tool_calls: number; coverage_note: string; trace: TraceStep[];
   prompt_version: string;
 };
@@ -65,6 +65,7 @@ export type Report = {
   };
   warnings: string[];
   agent_trace: AgentRun[];
+  exact_references?: Record<string, { occurrences: { repo: string; path: string; line: number; text: string }[]; files: number; truncated: boolean }>;
 };
 
 export type Investigation = {

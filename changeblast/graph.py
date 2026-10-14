@@ -14,7 +14,9 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
 from pydantic import BaseModel, Field
 
-from changeblast import a2a_client, repos, router, store
+import asyncio
+
+from changeblast import a2a_client, candidates, indexer, repos, router, store
 
 MAX_FOLLOW_UPS = 6
 SEED_HITS_PER_REPO = 25
@@ -29,6 +31,7 @@ class State(TypedDict, total=False):
     intent: dict
     discovery: dict  # repo -> list of {term, path, line, text}
     literal_baseline: dict  # repo -> files a plain grep for the request's own literals finds
+    exact_references: dict  # identifier named in the request -> every occurrence (deterministic)
     tasks: list[dict]
     results: Annotated[list[dict], operator.add]  # agent results from both rounds (parallel writers)
     follow_up_tasks: list[dict]
@@ -96,6 +99,12 @@ async def interpret(state: State) -> State:
 # --------------------------------------------------------------------------- discover (deterministic)
 
 async def discover(state: State) -> State:
+    # Code index per repo@sha (built once, cached): the dependency graph used to pick candidates.
+    for repo in state["repositories"]:
+        idx = await indexer.ensure_index(repo)
+        await store.event(state["investigation_id"], "indexed", repo, {
+            "quality": idx["quality"]["overall"], "files": idx["stats"]["files_total"],
+            "edges": idx["stats"]["edges"], "notes": idx["quality"]["notes"][:3]})
     # One combined pattern per repo, capped, so large repos (ERPNext: 5.8k files) stay fast and the
     # checkpointed state stays small.
     discovery = {repo: repos.search_terms(repo, state["intent"]["search_terms"]) for repo in state["repositories"]}
@@ -105,7 +114,20 @@ async def discover(state: State) -> State:
                 for repo in state["repositories"]}
     await store.event(state["investigation_id"], "discovery", "orchestrator", {
         repo: {"hits": len(h), "files": sorted({x["path"] for x in h})} for repo, h in discovery.items()})
-    return {"discovery": discovery, "literal_baseline": {"terms": sorted(literals), "files": baseline}}
+    # Identifiers named in the request (snake_case / camelCase): list EVERY occurrence deterministically.
+    # For renames and field changes completeness matters, and exact search gives it with certainty.
+    identifiers = sorted(set(re.findall(r"\b[a-z]+(?:_[a-z0-9]+)+\b|\b[a-z]+(?:[A-Z][a-z0-9]+)+\b",
+                                        state["change_request"])))
+    exact = {}
+    for ident in identifiers:
+        occ = []
+        for repo in state["repositories"]:
+            occ += [{"repo": repo, **h} for h in repos.search_terms(repo, [ident], max_hits=500)
+                    if re.search(rf"\b{re.escape(ident)}\b", h["text"])]
+        exact[ident] = {"occurrences": occ[:500], "files": len({(o["repo"], o["path"]) for o in occ}),
+                        "truncated": len(occ) >= 500}
+    return {"discovery": discovery, "literal_baseline": {"terms": sorted(literals), "files": baseline},
+            "exact_references": exact}
 
 
 # --------------------------------------------------------------------------- plan + fan-out
@@ -138,22 +160,33 @@ async def plan(state: State) -> State:
     router.current_investigation.set(state["investigation_id"])
     await store.set_status(state["investigation_id"], "INVESTIGATING")
     gated = await gate_hits(state)
-    tasks = []
-    for i, repo in enumerate(state["repositories"], start=1):
+    tasks, n = [], 0
+    for repo in state["repositories"]:
         g = gated.get(repo, {"likely": [], "screened": []})
-        likely = "\n".join(f"- {h['path']}:{h['line']} {h['text']}" for h in g["likely"][:SEED_HITS_PER_REPO])
-        screened = ", ".join(sorted({f"{h['path']}:{h['line']}" for h in g["screened"]})[:20])
-        task = (f"Determine what in {repo} must change, or could break, for this change.\n"
-                f"Keyword search found these lines; a quick screen rated them likely relevant:\n{likely or '- (none)'}\n"
-                + (f"The quick screen rated these unlikely (it misses about 1 in 4 real dependencies, so check any "
-                   f"that look suspicious): {screened}\n" if screened else "")
-                + "Look beyond these hits for equivalent representations the keyword search could miss.")
-        tasks.append({"task_id": f"task_{i}", "repo": repo, "task": task, "context": [], "round": "plan",
-                      "from_agent": "orchestrator"})
+        cands = await asyncio.to_thread(candidates.select, repo, state["intent"], g)
+        parts = await asyncio.to_thread(candidates.partition, repo, cands)
+        screened = ", ".join(sorted({f"{h['path']}:{h['line']}" for h in g["screened"]})[:15])
+        for part in parts:
+            n += 1
+            lines = "\n".join(f"- {c['path']} (score {c['score']}"
+                              + (f", symbols: {', '.join(c['symbols'])}" if c.get("symbols") else "") + "): "
+                              + "; ".join(c["reasons"][:3]) for c in part["candidates"]) \
+                or "- (no candidates: search from scratch)"
+            where = f"the `{part['scope']}` module of {repo}" if part["scope"] else repo
+            task = (f"Determine what in {where} must change, or could break, for this change.\n"
+                    f"Candidate files from the code graph and keyword search, highest score first, with why each "
+                    f"was picked:\n{lines}\n"
+                    + (f"Keyword hits a quick screen rated unlikely (it misses about 1 in 4 real dependencies, check "
+                       f"any that look suspicious): {screened}\n" if screened and not part["scope"] else "")
+                    + "Look beyond these for equivalent representations and string-based references the graph "
+                      "cannot see.")
+            tasks.append({"task_id": f"task_{n}", "repo": repo, "agent_id": part["agent_id"], "scope": part["scope"],
+                          "task": task, "context": [], "round": "plan", "from_agent": "orchestrator",
+                          "candidates": [c["path"] for c in part["candidates"]]})
     for t in tasks:
         await store.event(state["investigation_id"], "task_planned", t["repo"],
-                          {"task_id": t["task_id"], "round": "plan",
-                           "seed_hits": len(gated.get(t["repo"], {}).get("likely", []))})
+                          {"task_id": t["task_id"], "round": "plan", "agent_id": t["agent_id"], "scope": t["scope"],
+                           "candidates": len(t["candidates"]), "top": t["candidates"][:5]})
     return {"tasks": tasks}
 
 
@@ -165,18 +198,19 @@ def dispatch_plan(state: State) -> list[Send]:
 async def run_agent(task: dict[str, Any]) -> State:
     """One A2A round-trip to a repository agent. Failure becomes data (missing coverage)."""
     inv, repo = task["investigation_id"], task["repo"]
+    agent_id = task.get("agent_id", repo)
     try:
-        card = await a2a_client.discover(repo)
+        card = await a2a_client.discover(agent_id)
         await store.event(inv, "a2a_dispatch", repo, {"task_id": task["task_id"], "round": task["round"],
-                                                      "from": task["from_agent"], "card": card,
+                                                      "from": task["from_agent"], "card": card, "agent_id": agent_id,
                                                       "question": task.get("question")})
-        result = await a2a_client.send_task(repo, {
+        result = await a2a_client.send_task(agent_id, {
             "investigation_id": inv, "task_id": task["task_id"], "change_request": task["change_request"],
             "task": task["task"], "context": task.get("context", [])})
     except a2a_client.AgentUnavailable as e:
         result = {"status": "failed", "error": str(e), "repo": repo, "findings": []}
     result.update(task_id=task["task_id"], round=task["round"], from_agent=task["from_agent"],
-                  interface=task.get("interface"))
+                  interface=task.get("interface"), agent_id=agent_id, scope=task.get("scope", ""))
     await store.event(inv, "a2a_result", repo, {
         "task_id": task["task_id"], "round": task["round"], "status": result.get("status"),
         "error": result.get("error"), "findings": len(result.get("findings", [])),
@@ -271,7 +305,7 @@ async def validate(state: State) -> State:
             line_start = check.get("line_start", f["line_start"])
             line_end = check.get("line_end", f["line_end"])
             findings.append({
-                "finding_id": f"f_{n:03d}", "agent_id": f"{r['repo']}-agent", "repository": r["repo"],
+                "finding_id": f"f_{n:03d}", "agent_id": r.get("agent_id", r["repo"]), "repository": r["repo"],
                 "commit_sha": r["commit"], "path": f["path"], "line_start": line_start, "line_end": line_end,
                 "symbol": f.get("symbol") or None, "claim": f["claim"], "evidence_excerpt": f["evidence_excerpt"],
                 "evidence_status": status, "verification_note": check.get("note"),
@@ -446,6 +480,7 @@ async def report(state: State) -> State:
         "summary": narrative["summary"] if narrative else "Narrative unavailable; findings below are verified.",
         "narrative": narrative, "findings": findings, "graph": state["impact_graph"],
         "missing_coverage": missing, "unrouted_questions": state.get("unrouted_questions", []),
+        "exact_references": state.get("exact_references", {}),
         "agent_open_questions": agent_questions,
         "stats": {
             "verified": sum(f["evidence_status"] == "verified" for f in findings),
@@ -461,7 +496,7 @@ async def report(state: State) -> State:
             "literal_baseline": state.get("literal_baseline", {}),
         },
         "warnings": state.get("warnings", []) + warnings,
-        "agent_trace": [{k: r.get(k) for k in ("repo", "task_id", "round", "from_agent", "interface", "status",
+        "agent_trace": [{k: r.get(k) for k in ("repo", "agent_id", "scope", "task_id", "round", "from_agent", "interface", "status",
                                                  "error", "tool_calls", "coverage_note", "trace", "prompt_version")}
                         for r in results],
     }

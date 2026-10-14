@@ -207,8 +207,10 @@ async def resume(inv_id: str):
                 out = await workflow.run_agent({**t, "investigation_id": inv_id,
                                                 "change_request": inv["change_request"]})
                 results += out["results"]
-            # Write the new results as if the follow-up agents produced them; the graph continues at validate.
-            await graph.aupdate_state(cfg(inv_id), {"results": results}, as_node="follow_up_agent")
+            # If planned tasks were retried, continue at follow-up planning (their cross-service questions
+            # were never routed); if only follow-ups were retried, continue at validate.
+            as_node = "agent" if any(t["round"] == "plan" for t in tasks) else "follow_up_agent"
+            await graph.aupdate_state(cfg(inv_id), {"results": results}, as_node=as_node)
             await run(inv_id, None)
 
         task = asyncio.create_task(retry())

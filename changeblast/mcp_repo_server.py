@@ -9,10 +9,12 @@ import sys
 
 from mcp.server.mcpserver import MCPServer
 
-from changeblast import repos
+from changeblast import graphdb, repos
 
 REPO = sys.argv[1] if len(sys.argv) > 1 else ""
+SCOPE = sys.argv[2] if len(sys.argv) > 2 else ""  # module this agent focuses on ("" = whole repo)
 CONTRACTS = "shared-contracts"
+MAX_LIST = 300
 
 mcp = MCPServer(f"repo-tools:{REPO}", instructions=f"Read-only access to {REPO} at a pinned commit.")
 
@@ -25,9 +27,40 @@ def _safe(fn, *args, **kwargs) -> str:
 
 
 @mcp.tool()
-def list_files() -> str:
-    """List every file in this repository at the pinned commit."""
-    return json.dumps({"repo": REPO, "commit": repos.head_sha(REPO), "files": list(repos.list_files(REPO))})
+def list_files(path_prefix: str | None = None) -> str:
+    """List files at the pinned commit under path_prefix (defaults to your module). Max 300 per call."""
+    prefix = (SCOPE if path_prefix is None else path_prefix).strip("/")
+    files = [f for f in repos.list_files(REPO) if not prefix or f.startswith(prefix + "/")]
+    return json.dumps({"repo": REPO, "commit": repos.head_sha(REPO), "prefix": prefix or "/",
+                       "files": files[:MAX_LIST], "total": len(files), "truncated": len(files) > MAX_LIST})
+
+
+@mcp.tool()
+def find_symbol(name: str) -> str:
+    """Where is `name` defined? Exact matches first, then names containing it. From the tree-sitter index."""
+    return _safe(graphdb.find_symbol, REPO, name)
+
+
+@mcp.tool()
+def who_uses(path: str, symbol: str | None = None) -> str:
+    """Files that import or reference `path` (optionally only via `symbol`): the blast radius of changing it.
+    Each edge has a confidence: resolved (import traced), name_match (unique name), ambiguous (name defined in
+    several places: verify before relying on it). Calls that pick their target from a string at runtime
+    (getattr, frappe.get_doc("Doctype")) are NOT in the graph; use search_code for those."""
+    return _safe(graphdb.who_uses, REPO, path, symbol)
+
+
+@mcp.tool()
+def dependencies_of(path: str) -> str:
+    """Files that `path` imports or references (forward edges), with confidence."""
+    return _safe(graphdb.dependencies_of, REPO, path)
+
+
+@mcp.tool()
+def outline(path: str) -> str:
+    """Signatures without bodies: a file's definitions with line spans, or a directory's files.
+    Cheaper than read_file for getting oriented in a large module."""
+    return _safe(graphdb.outline, REPO, path)
 
 
 @mcp.tool()

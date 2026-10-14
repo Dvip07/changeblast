@@ -8,7 +8,9 @@
 
 | Claim | Status |
 |---|---|
-| Repository agents run as **separate A2A services** (one process and port per repo), discovered by agent card | Built (`a2a-sdk` 1.2, protocol 1.0, JSON-RPC) |
+| Repository agents are **independently addressable A2A agents** (one per repo, or per module of a large repo) served by an agent host and discovered by agent card | Built (`a2a-sdk` 1.2, protocol 1.0, JSON-RPC) |
+| **tree-sitter code index**: symbols, imports, references, dependency graph with edge confidence, quality score; agents get `who_uses` / `find_symbol` / `outline` | Built (ERPNext: 5.8k files indexed in 2.4 s) |
+| **Model routing:** Jev / GPT-5 nano yes/no, DeepSeek extraction, Claude Sonnet 5.5 reasoning; cost ledger; $15/day cap | Built |
 | Agents reach code only through an **MCP server** locked to their own repo (plus read-only shared contracts) | Built (`mcp` 2.3, stdio) |
 | **LangGraph** orchestration, parallel fan-out, **Postgres checkpoints**, resume after a crash, retry of failed agents only | Built |
 | Every citation **re-checked** against the file at the pinned commit before it can be shown as `verified` | Built (deterministic, no LLM) |
@@ -63,7 +65,7 @@ Requires Docker, Python 3.12+, Node 20+, and an Anthropic API key.
 make setup                 # builds repos/ from fixtures/, venv, npm install, .env from .env.example
 # put ANTHROPIC_API_KEY in .env
 make infra                 # Postgres on :5433
-make agents                # five A2A repo agents on :9300-9304 (logs in logs/)
+make agents                # A2A agent host on :9300 (agents per repo/module, created on demand)
 make api                   # orchestrator API on :8100
 make web                   # UI on :3100
 ```

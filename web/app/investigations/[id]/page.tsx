@@ -13,7 +13,9 @@ function describe(e: InvEvent): { text: string; cls?: string } {
     case "status": return { text: `Status → ${p.status}${p.error ? ` (${p.error})` : ""}`, cls: p.status === "FAILED" ? "fail" : undefined };
     case "intent": return { text: `Interpreted request; ${p.search_terms.length} search terms: ${p.search_terms.slice(0, 8).join(", ")}…` };
     case "discovery": return { text: "Keyword search: " + Object.entries(p).map(([r, v]: [string, any]) => `${r} ${v.hits} hits`).join(" · ") };
-    case "task_planned": return { text: `Planned ${p.task_id} for ${e.agent} (${p.seed_hits} seed hits)` };
+    case "task_planned": return { text: `Planned ${p.task_id} → agent ${p.agent_id ?? e.agent}${p.scope ? ` (module ${p.scope})` : ""}: ${p.candidates ?? p.seed_hits} candidate files from the code graph` };
+    case "indexed": return { text: `Code index ${e.agent}: ${p.files} files, ${p.edges} graph edges, quality ${p.quality ?? "n/a"}/100` };
+    case "seed_gate": return { text: "Cheap relevance screen: " + Object.entries(p).map(([r, v]: [string, any]) => `${r} ${v.likely}/${v.hits} likely`).join(" · ") };
     case "a2a_dispatch": return { text: `A2A → ${e.agent} agent: ${p.task_id}${p.round === "follow_up" ? ` (follow-up from ${p.from})` : ""}`, cls: "a2a" };
     case "a2a_followup_routed": return { text: `Routed ${p.interface} question from ${p.from} → ${e.agent} (grep found ${p.routing_evidence.length} references)`, cls: "a2a" };
     case "a2a_result": return {
@@ -243,6 +245,19 @@ export default function InvestigationPage({ params }: { params: Promise<{ id: st
                 ))}
                 <p className="muted">Proposed only. No tests were generated or run.</p>
               </section>
+              {Object.entries(report.exact_references ?? {}).filter(([, r]) => r.occurrences.length > 0).map(([ident, r]) => (
+                <section key={ident}>
+                  <h2>Every occurrence of <code>{ident}</code></h2>
+                  <p className="muted" style={{ marginTop: 0 }}>Exact search, no AI: {r.occurrences.length} lines in {r.files} files
+                    {r.truncated ? " (truncated)" : ""}. Use this as the completeness checklist for a rename.</p>
+                  <div className="code" style={{ maxHeight: 360 }}>
+                    {r.occurrences.map((o, i) => (
+                      <div key={i} className="ln"><span className="n" style={{ width: "auto", minWidth: 44 }}>{o.line}</span>
+                        <span><b>{o.repo}/{o.path}</b> {o.text}</span></div>
+                    ))}
+                  </div>
+                </section>
+              ))}
               <section>
                 <h2>Open questions</h2>
                 <ul>{n.open_questions.map((q, i) => <li key={i}>{q}</li>)}</ul>
@@ -262,7 +277,7 @@ export default function InvestigationPage({ params }: { params: Promise<{ id: st
                 {report.agent_trace.map((a) => (
                   <details key={a.task_id} className="list-item">
                     <summary>
-                      <span className={`pill s-${a.status}`}>{a.status}</span> <b>{a.repo}</b> <code className="muted">{a.task_id}</code>{" "}
+                      <span className={`pill s-${a.status}`}>{a.status}</span> <b>{a.agent_id ?? a.repo}</b> <code className="muted">{a.task_id}</code>{" "}
                       <span className="muted">{a.round === "follow_up" ? `follow-up from ${a.from_agent} re ${a.interface}` : "planned"} · {a.tool_calls ?? 0} tool calls</span>
                     </summary>
                     {a.error && <p className="error">{a.error}</p>}

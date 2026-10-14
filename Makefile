@@ -1,4 +1,3 @@
-REPOS := billing-service payments-service notification-service checkout-web shared-contracts
 PY := .venv/bin/python
 
 .PHONY: repos setup infra agents stop-agents api web eval
@@ -14,14 +13,13 @@ repos:
 infra:
 	docker compose up -d
 
-# Five independent A2A services, one per repository, on ports 9300-9304 (logs in logs/).
+# A2A agent host on :9300: one addressable agent per repository or module, created on demand.
 agents:
-	@mkdir -p logs; port=9300; for r in $(REPOS); do \
-	  REPO=$$r nohup .venv/bin/uvicorn changeblast.agent_server:app --port $$port > logs/agent-$$r.log 2>&1 & \
-	  echo "$$r agent on :$$port"; port=$$((port+1)); done
+	@mkdir -p logs; nohup .venv/bin/uvicorn changeblast.agent_host:app --port 9300 > logs/agent-host.log 2>&1 &
+	@echo "agent host on :9300 (cards at /agents/<repo-or-module>/.well-known/agent-card.json)"
 
 stop-agents:
-	-pkill -f "changeblast.agent_server:app"
+	-pkill -f "changeblast.agent_host:app"
 
 api:
 	.venv/bin/uvicorn changeblast.api:app --port 8100

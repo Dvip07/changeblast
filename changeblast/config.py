@@ -20,14 +20,12 @@ DAILY_LIMIT_USD = float(os.getenv("DAILY_LIMIT_USD", "15"))
 # Claude Sonnet 5.5, USD per 1M tokens (cache write = 5-minute TTL, 1.25x input).
 ANTHROPIC_PRICES = {"input": 2.00, "output": 10.00, "cache_read": 0.20, "cache_write": 2.50}
 
-# Repo agents run as separate A2A services, one per repository, on consecutive ports.
-AGENT_BASE_PORT = int(os.getenv("AGENT_BASE_PORT", "9300"))
-AGENT_REPOS = ["billing-service", "payments-service", "notification-service", "checkout-web", "shared-contracts"]
+# A2A agent host (changeblast/agent_host.py): one addressable agent per repository or module.
+AGENT_HOST_URL = os.getenv("AGENT_HOST_URL", "http://localhost:9300")
 
 
-def agent_url(repo: str) -> str:
-    return os.getenv(f"AGENT_URL_{repo.upper().replace('-', '_')}",
-                     f"http://localhost:{AGENT_BASE_PORT + AGENT_REPOS.index(repo)}")
+def agent_url(agent_id: str) -> str:
+    return f"{AGENT_HOST_URL}/agents/{agent_id}"
 
 
 # Per-agent budgets (spec: bounded tool calls and time per task).

@@ -10,6 +10,11 @@ const SCENARIOS = [
   { label: "B. Breaking event change", text: "Rename the refund_amount_cents field in the RefundApproved event to amount." },
   { label: "C. Customer-facing copy", text: "Update every customer-facing message that describes the refund window so it says 30 days." },
 ];
+// For the large-repo demo (ERPNext); select erpnext alone when using these.
+const ERP_SCENARIOS = [
+  { label: "E1. Business-day due dates", text: "Add a 'Business Days' option to Payment Terms so credit_days can skip weekends and holidays when calculating invoice due dates." },
+  { label: "E2. Rename credit_days", text: "Rename the credit_days field on Payment Term to credit_period_days." },
+];
 
 type Repo = { name: string; commit: string; files: number; kind: "fixture" | "cloned" };
 type Recent = { id: string; change_request: string; status: string; created_at: string };
@@ -57,8 +62,14 @@ export default function Setup() {
         <textarea value={text} onChange={(e) => setText(e.target.value)} />
         <div className="row" style={{ marginTop: 6 }}>
           <span className="muted">Seeded scenarios:</span>
-          {SCENARIOS.map((s) => <button key={s.label} onClick={() => setText(s.text)}>{s.label}</button>)}
+          {SCENARIOS.map((s) => <button key={s.label} onClick={() => { setText(s.text); setSelected(repos.filter((r) => r.kind === "fixture").map((r) => r.name)); }}>{s.label}</button>)}
         </div>
+        {repos.some((r) => r.name === "erpnext") && (
+          <div className="row" style={{ marginTop: 6 }}>
+            <span className="muted">ERPNext (large repo):</span>
+            {ERP_SCENARIOS.map((s) => <button key={s.label} onClick={() => { setText(s.text); setSelected(["erpnext"]); }}>{s.label}</button>)}
+          </div>
+        )}
         <h2 style={{ marginTop: 16 }}>Repositories</h2>
         {repos.map((r) => (
           <label key={r.name} className="row" style={{ marginBottom: 4 }}>

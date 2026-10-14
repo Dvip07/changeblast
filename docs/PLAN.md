@@ -145,7 +145,7 @@ Routing is **fixed by task type in code**, not decided by an LLM, so it's predic
 |---|---|---|
 | 1 | Model router + caches + cost tracking | **Done.** $0.47 per run, down from ~$3; see Phase 1 results |
 | 2 | Indexer + quality score on the fixtures and one large open-source repo | **Done.** ERPNext indexed in 2.4 s, quality 73/100 |
-| 3 | Graph-based candidates + relevance gate + partitioned agents + graph MCP tools | Large repos work |
+| 3 | Graph-based candidates + relevance gate + partitioned agents + graph MCP tools | **Done.** ERPNext investigations for about $0.20 |
 | 4 | GitHub ingestion (MCP metadata + clone at SHA) | Real repos |
 | 5 | Access code, spend cap, public pages | Safe to share |
 | 6 | AWS deploy | Live URL |
@@ -206,6 +206,36 @@ The indexer (`changeblast/indexer/`), dependency graph, and quality score are bu
 - **Fixture bug the indexer caught:** a `.ts` test containing JSX, renamed to `.tsx`.
 
 **Known weakness:** `name_match` on method calls (`frm.set_query`) can point at a same-named method that isn't the real target. It's labeled `name_match`, never `resolved`.
+
+## Phase 3 results (done, 14 Oct 2026)
+
+Graph-based candidate selection, module partitions, the A2A agent host, graph MCP tools, and ERPNext scenarios are built and tested.
+
+- **Agent host** (`changeblast/agent_host.py`, one process on :9300): creates an A2A agent on demand for any allowlisted repo or module (`erpnext--erpnext.accounts`). Each agent has its own card URL and two skills. This replaces the five fixed per-repo processes. Invalid or path-traversal IDs get a 404 from the allowlist check.
+- **Candidates** (`changeblast/candidates.py`):
+  - Seeds come from keyword hits (gate-ordered) plus definitions whose names match identifier-like intent terms.
+  - The walk follows reverse **call/reference edges to the specific symbols that matter**, then continues from the function containing each call (call chains).
+  - Tests are leaves: weighted down, never expanded from, and capped at 30%.
+  - Small repos get one agent; large repos are split into at most 4 module agents.
+- **Graph MCP tools:** `find_symbol`, `who_uses`, `dependencies_of`, `outline`; `list_files` is capped and scoped.
+- **Exact references:** every identifier named in the request (`credit_days`) gets a deterministic list of all its occurrences in the report. For renames, completeness comes from exact search, not from agents.
+
+| Run | Result | Cost / time |
+|---|---|---|
+| Fixtures A (fresh) | recall 0.9, precision 0.92, citation validity 0.96 (the verifier caught 1 bad citation), 51 tool calls, 11 A2A tasks | $0.46 / 77 s |
+| ERPNext E1, business-day due dates | Found both due-date implementations (`payment_schedule.py:425`, `party.py:753`, flagged as diverging duplicates), the Payment Term schema JSON, `transaction.js`, template validation, and `child_item_update.py`. Stable across 2 runs | $0.18–0.20 / about 80 s |
+| ERPNext E2, rename `credit_days` | Agents cited 10–12 of 19 files (all core code; missed tests and generated type hints). The exact-reference list has 48 lines in 19 files, matching `git grep` | $0.15–0.24 |
+
+**Bugs found while testing, all fixed:**
+- **Walk dominated by tests and hub modules:** file-level fan-out pulled in test helpers and every importer of `payment_entry`. Fixed with symbol-precise call chains and test handling.
+- **Starlette 1.x mounts** pass the full path with the prefix in `root_path`, so the dispatcher read the agent ID as `agents`. Fixed.
+- **Resume after failed planned tasks** skipped follow-up routing. It now resumes before follow-up planning.
+- **Lazy agents:** with a candidate list, agents made 19 tool calls instead of 53. The prompt now requires reading the candidates and running `who_uses` on every must-change symbol, which restored 51 calls.
+
+**Known gaps:**
+- **`credits.py` in scenario A:** the graph ranks it 5th, but the agent puts the new rule in `policy.py` and doesn't report it. A judgment miss, not a selection miss.
+- **Noise partitions on ERPNext:** manufacturing and projects get agents that find nothing. Cheap (1 call each), but they should be screened.
+- **Few tool calls on ERPNext:** agents there use only 1–4 calls each; deeper exploration would likely find more tests.
 
 ## Decisions (agreed 14 Oct 2026)
 

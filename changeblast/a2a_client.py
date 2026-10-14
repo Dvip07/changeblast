@@ -24,21 +24,21 @@ def _ints(value):
     return value
 
 
-async def discover(repo: str) -> dict:
+async def discover(agent_id: str) -> dict:
     """Fetch the agent card. Returns a JSON-able summary for the trace."""
     try:
         async with httpx.AsyncClient(timeout=5) as http:
-            card = await A2ACardResolver(http, agent_url(repo)).get_agent_card()
+            card = await A2ACardResolver(http, agent_url(agent_id)).get_agent_card()
     except Exception as e:  # noqa: BLE001 - no card means no agent: missing coverage, not a crash
-        raise AgentUnavailable(f"{repo} agent card unavailable: {type(e).__name__}") from None
+        raise AgentUnavailable(f"{agent_id} agent card unavailable: {type(e).__name__}") from None
     return {"name": card.name, "url": card.supported_interfaces[0].url,
             "skills": [s.id for s in card.skills], "version": card.version}
 
 
-async def send_task(repo: str, payload: dict) -> dict:
+async def send_task(agent_id: str, payload: dict) -> dict:
     try:
         async with httpx.AsyncClient(timeout=AGENT_TIMEOUT_SECONDS) as http:
-            card = await A2ACardResolver(http, agent_url(repo)).get_agent_card()
+            card = await A2ACardResolver(http, agent_url(agent_id)).get_agent_card()
             client = await create_client(card, client_config=ClientConfig(streaming=False, httpx_client=http))
             msg = new_data_message(payload, role=Role.ROLE_USER)
             async with asyncio.timeout(AGENT_TIMEOUT_SECONDS):
@@ -46,5 +46,5 @@ async def send_task(repo: str, payload: dict) -> dict:
                     if event.HasField("message"):
                         return _ints(get_data_parts(event.message.parts)[0])
     except Exception as e:  # noqa: BLE001 - any transport/discovery failure = missing coverage
-        raise AgentUnavailable(f"{repo} agent unreachable: {type(e).__name__}") from None
-    raise AgentUnavailable(f"{repo} agent returned no message")
+        raise AgentUnavailable(f"{agent_id} agent unreachable: {type(e).__name__}") from None
+    raise AgentUnavailable(f"{agent_id} agent returned no message")

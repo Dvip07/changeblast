@@ -11,13 +11,13 @@ import sys
 from mcp import Client, StdioServerParameters
 
 from changeblast import repos, router
-from changeblast.config import AGENT_MAX_TOOL_CALLS, AGENT_REPOS, ROOT
+from changeblast.config import AGENT_MAX_TOOL_CALLS, ROOT
 
 
 class LLMUnavailable(Exception):
     """Safe message for agent failures (model error, refusal, or daily budget reached)."""
 
-PROMPT_VERSION = "repo-investigator-v2"
+PROMPT_VERSION = "repo-investigator-v4"
 
 IMPACT_TYPES = ["business_rule", "api_contract", "event_contract", "ui_behavior", "customer_copy",
                 "data_reporting", "test", "downstream_behavior", "config"]
@@ -79,15 +79,25 @@ SUBMIT_TOOL = {
     },
 }
 
-SYSTEM = """You are the {repo} repository specialist in a change-impact investigation.
+SYSTEM = """You are the {where} specialist in a change-impact investigation.
 
-Goal: find every place in {repo} that must change, or could break, if the change request is implemented.
+Goal: find every place {focus} that must change, or could break, if the change request is implemented.
 Other repositories in this system: {others}. You cannot read them; if your code exposes an event or API
 that they may consume, add a cross_service_question instead of guessing about their code.
 
 How to work:
-- Start with search_code using several phrasings: domain terms, constant names, and equivalent
-  representations of numbers (e.g. a day count expressed in hours, milliseconds, or words like "two weeks").
+- Your task lists candidate files picked from the code graph, with the reason each was picked. They are
+  leads, not the answer: the list is incomplete and contains noise. Confirm each one by reading it, and drop
+  the ones that turn out unrelated.
+- Before submitting, for every symbol you mark must_change, call who_uses on its file (with the symbol) and
+  check the callers: that is the blast radius, and it is where missed impacts usually hide. Also look for
+  the code that a new rule would need (helpers, settings, schema/config files), not only code that changes.
+- Use outline to get oriented in a file or directory cheaply. Graph edges marked ambiguous or name_match
+  need verification by reading.
+- Use search_code with several phrasings: domain terms, constant and field names, and equivalent
+  representations of numbers (e.g. a day count in hours, milliseconds, or words like "two weeks").
+  Field names used through strings (e.g. frappe.get_doc / doc.get("field"), JSON schema files) are only
+  findable by search, not by the graph.
 - read_file around every hit before citing it. Cite exact line numbers from read_file output.
 - evidence_excerpt must be copied verbatim from the cited lines; it is machine-checked against the file.
 - Mark basis "inferred" when you have not read code that proves the claim. Never present guesses as observed.
@@ -99,27 +109,29 @@ How to work:
 - Budget: at most {max_calls} tool calls. Finish by calling submit_findings exactly once."""
 
 
-def _mcp_server(repo: str) -> StdioServerParameters:
-    return StdioServerParameters(command=sys.executable, args=["-m", "changeblast.mcp_repo_server", repo],
+def _mcp_server(repo: str, scope: str = "") -> StdioServerParameters:
+    return StdioServerParameters(command=sys.executable, args=["-m", "changeblast.mcp_repo_server", repo, scope],
                                  cwd=str(ROOT))
 
 
 async def investigate(repo: str, change_request: str, task: str, context: list[str] | None = None,
-                      on_event=None) -> dict:
-    """Run the investigation for one repo. Returns the submitted findings plus a tool-call trace."""
+                      on_event=None, scope: str = "") -> dict:
+    """Run the investigation for one repo (or one module of it). Returns findings plus a tool-call trace."""
     emit = on_event or (lambda *_: None)
-    others = ", ".join(r for r in AGENT_REPOS if r != repo)
+    others = ", ".join(r for r in repos.available_repos() if r != repo) or "none"
     user = f"Change request:\n{change_request}\n\nYour task:\n{task}"
     if context:
         user += "\n\nContext from other agents:\n" + "\n".join(f"- {c}" for c in context)
 
     trace, calls = [], 0
-    async with Client(_mcp_server(repo)) as mcp:
+    async with Client(_mcp_server(repo, scope)) as mcp:
         mcp_tools = (await mcp.list_tools()).tools
         tools = [{"name": t.name, "description": t.description or "", "input_schema": t.input_schema}
                  for t in mcp_tools] + [SUBMIT_TOOL]
         messages = [{"role": "user", "content": user}]
-        system = SYSTEM.format(repo=repo, others=others, max_calls=AGENT_MAX_TOOL_CALLS)
+        where = f"{repo} repository, `{scope}` module," if scope else f"{repo} repository"
+        focus = f"in `{scope}` (and anything in {repo} that depends on it)" if scope else f"in {repo}"
+        system = SYSTEM.format(where=where, focus=focus, others=others, max_calls=AGENT_MAX_TOOL_CALLS)
 
         while True:
             try:
@@ -136,7 +148,7 @@ async def investigate(repo: str, change_request: str, task: str, context: list[s
             submitted = next((b for b in tool_uses if b.name == "submit_findings"), None)
             if submitted:
                 result = dict(submitted.input)
-                result.update(repo=repo, commit=repos.head_sha(repo), tool_calls=calls, trace=trace,
+                result.update(repo=repo, scope=scope, commit=repos.head_sha(repo), tool_calls=calls, trace=trace,
                               prompt_version=PROMPT_VERSION)
                 return result
 
