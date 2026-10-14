@@ -9,7 +9,7 @@ from fastapi.responses import PlainTextResponse
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from pydantic import BaseModel, Field
 
-from changeblast import graph as workflow, repos, store
+from changeblast import graph as workflow, repos, router, store
 from changeblast.export import to_markdown
 
 log = logging.getLogger("changeblast")
@@ -38,6 +38,7 @@ def cfg(inv_id: str) -> dict:
 
 async def run(inv_id: str, initial: dict | None) -> None:
     """Run (or continue) the graph. Any crash becomes FAILED with a safe message, never a stack trace."""
+    router.current_investigation.set(inv_id)
     try:
         await graph.ainvoke(initial, cfg(inv_id))
     except Exception as e:  # noqa: BLE001
@@ -77,6 +78,10 @@ async def create_investigation(body: NewInvestigation, idempotency_key: str | No
         raise HTTPException(400, f"repositories not in allowlist: {unknown}")
     if not body.constraints.read_only:
         raise HTTPException(400, "only read-only investigations are supported")
+    try:
+        await router.check_budget()
+    except router.BudgetExceeded as e:
+        raise HTTPException(429, str(e)) from None
     inv_id = f"inv_{uuid.uuid4().hex[:10]}"
     inv_id, created = await store.create(inv_id, body.change_request, body.repositories,
                                          body.constraints.model_dump(), idempotency_key)
@@ -86,6 +91,11 @@ async def create_investigation(body: NewInvestigation, idempotency_key: str | No
     inv = await store.get(inv_id)
     return {"investigation_id": inv_id, "status": inv["status"], "created": created,
             "commits": {r: repos.head_sha(r) for r in body.repositories}}
+
+
+@app.get("/api/usage")
+async def usage_today():
+    return await router.usage_summary()
 
 
 @app.get("/api/investigations")

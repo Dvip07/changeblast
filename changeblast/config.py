@@ -9,7 +9,16 @@ load_dotenv(ROOT / ".env")
 # Git repos built from fixtures/ by scripts/build_repos.sh (deterministic SHAs).
 FIXTURES_DIR = os.getenv("FIXTURES_DIR", str(ROOT / "repos"))
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:dev@localhost:5433/changeblast")
-MODEL = os.getenv("CHANGEBLAST_MODEL", "claude-opus-5-5")
+# Model routing (see changeblast/router.py). Complex reasoning uses Sonnet, not Opus.
+REASON_MODEL = os.getenv("REASON_MODEL", "claude-sonnet-5-5")
+BOOL_MODELS = os.getenv("BOOL_MODELS", "typesafe/jev-router,openai/gpt-5-nano").split(",")
+EXTRACT_MODELS = os.getenv("EXTRACT_MODELS", "deepseek/deepseek-v4.1-flash,openai/gpt-oss-120b").split(",")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+OPENROUTER_CONCURRENCY = int(os.getenv("OPENROUTER_CONCURRENCY", "20"))
+ANTHROPIC_CONCURRENCY = int(os.getenv("ANTHROPIC_CONCURRENCY", "6"))
+DAILY_LIMIT_USD = float(os.getenv("DAILY_LIMIT_USD", "15"))
+# Claude Sonnet 5.5, USD per 1M tokens (cache write = 5-minute TTL, 1.25x input).
+ANTHROPIC_PRICES = {"input": 2.00, "output": 10.00, "cache_read": 0.20, "cache_write": 2.50}
 
 # Repo agents run as separate A2A services, one per repository, on consecutive ports.
 AGENT_BASE_PORT = int(os.getenv("AGENT_BASE_PORT", "9300"))

@@ -111,7 +111,7 @@ What the numbers show:
 **Known weaknesses:**
 - **Precision is the weak spot.** Agents sometimes mark consumers of an unchanged event as `may_break` "in case the schema changes."
 - **Recall varies between runs:** 0.9 to 1.0 on scenario A, with `credits.py` sometimes missed.
-- **Cost:** each investigation uses about 80–90 tool calls on Claude Opus 5.5.
+- **Cost:** each investigation uses about 80–90 tool calls (before model routing). See docs/PLAN.md for routed numbers: about $0.47 and 2 minutes per run.
 
 ## Security and reliability
 

@@ -29,6 +29,32 @@ CREATE TABLE IF NOT EXISTS investigation_events (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS ie_inv ON investigation_events (investigation_id, id);
+CREATE TABLE IF NOT EXISTS llm_usage (
+  id BIGSERIAL PRIMARY KEY,
+  investigation_id TEXT,
+  component TEXT NOT NULL,
+  tier TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  model TEXT NOT NULL,
+  input_tokens INT NOT NULL DEFAULT 0,
+  output_tokens INT NOT NULL DEFAULT 0,
+  cache_read_tokens INT NOT NULL DEFAULT 0,
+  cache_write_tokens INT NOT NULL DEFAULT 0,
+  cost_usd NUMERIC(12, 6) NOT NULL DEFAULT 0,
+  cache_hit BOOLEAN NOT NULL DEFAULT false,
+  fallback_used BOOLEAN NOT NULL DEFAULT false,
+  latency_ms INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS llm_usage_day ON llm_usage (created_at);
+CREATE INDEX IF NOT EXISTS llm_usage_inv ON llm_usage (investigation_id);
+CREATE TABLE IF NOT EXISTS llm_cache (
+  key TEXT PRIMARY KEY,
+  tier TEXT NOT NULL,
+  model TEXT NOT NULL,
+  response JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 CREATE OR REPLACE FUNCTION events_append_only() RETURNS trigger AS $$
 BEGIN RAISE EXCEPTION 'investigation_events is append-only'; END; $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS events_immutable ON investigation_events;
@@ -39,7 +65,12 @@ FOR EACH ROW EXECUTE FUNCTION events_append_only();
 
 async def setup() -> None:
     async with pool.connection() as conn:
-        await conn.execute(SCHEMA, prepare=False)  # multi-statement script can't be a prepared statement
+        # The API and every agent process call setup at startup; the advisory lock serializes them.
+        await conn.execute("SELECT pg_advisory_lock(7351)")
+        try:
+            await conn.execute(SCHEMA, prepare=False)  # multi-statement script can't be a prepared statement
+        finally:
+            await conn.execute("SELECT pg_advisory_unlock(7351)")
 
 
 async def create(inv_id: str, change_request: str, repositories: list[str], constraints: dict,

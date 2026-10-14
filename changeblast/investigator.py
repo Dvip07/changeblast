@@ -8,12 +8,14 @@ import asyncio
 import json
 import sys
 
-import anthropic
 from mcp import Client, StdioServerParameters
 
-from changeblast import repos
+from changeblast import repos, router
 from changeblast.config import AGENT_MAX_TOOL_CALLS, AGENT_REPOS, ROOT
-from changeblast.llm import COMMON, LLMUnavailable, client, describe_error
+
+
+class LLMUnavailable(Exception):
+    """Safe message for agent failures (model error, refusal, or daily budget reached)."""
 
 PROMPT_VERSION = "repo-investigator-v2"
 
@@ -121,14 +123,12 @@ async def investigate(repo: str, change_request: str, task: str, context: list[s
 
         while True:
             try:
-                resp = await client.beta.messages.create(
-                    **COMMON, max_tokens=16000, system=system, tools=tools, messages=messages,
-                    output_config={"effort": "medium"},
-                )
-            except anthropic.APIError as e:
-                raise LLMUnavailable(describe_error(e)) from None
-            if resp.stop_reason == "refusal":
-                raise LLMUnavailable("model declined the request")
+                # Sonnet via the router: cost is recorded, the daily cap is enforced, and the stable
+                # system + tools prefix plus the growing tool loop are prompt-cached between turns.
+                resp = await router.reason(max_tokens=16000, system=system, tools=tools, messages=messages,
+                                           output_config={"effort": "medium"})
+            except (router.RouterError, router.BudgetExceeded) as e:
+                raise LLMUnavailable(str(e)) from None
 
             messages.append({"role": "assistant", "content": resp.content})
             tool_uses = [b for b in resp.content if b.type == "tool_use"]

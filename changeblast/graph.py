@@ -10,16 +10,15 @@ import operator
 import re
 from typing import Annotated, Any, TypedDict
 
-import anthropic
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
 from pydantic import BaseModel, Field
 
-from changeblast import a2a_client, repos, store
-from changeblast.llm import COMMON, client, describe_error
+from changeblast import a2a_client, repos, router, store
 
 MAX_FOLLOW_UPS = 6
 SEED_HITS_PER_REPO = 25
+GATE_MAX_HITS_PER_REPO = 60
 
 
 class State(TypedDict, total=False):
@@ -74,21 +73,22 @@ SQL, API specs, UI copy, and email templates. Return only what is asked."""
 
 async def interpret(state: State) -> State:
     inv = state["investigation_id"]
+    router.current_investigation.set(inv)
     await store.set_status(inv, "INDEXING")
     try:
-        resp = await client.beta.messages.parse(
-            **COMMON, max_tokens=8000, output_format=Intent, output_config={"effort": "low"},
-            messages=[{"role": "user", "content": INTERPRET_PROMPT.format(
-                repos=", ".join(state["repositories"]), request=state["change_request"],
-                constraints=state.get("constraints") or {})}])
-        intent = resp.parsed_output.model_dump()
+        # Cheap tier: structured extraction, cached by input.
+        intent = (await router.extract(
+            Intent, "You prepare code investigations. Reply with JSON matching the schema.",
+            INTERPRET_PROMPT.format(repos=", ".join(state["repositories"]), request=state["change_request"],
+                                    constraints=state.get("constraints") or {}),
+            prompt_version="interpret-v1")).model_dump()
         warnings = []
-    except (anthropic.APIError, AttributeError) as e:
+    except (router.RouterError, router.BudgetExceeded) as e:
         # Degrade, don't fail: fall back to words and numbers from the request itself.
         words = re.findall(r"[A-Za-z_][A-Za-z_]{3,}|\d+", state["change_request"])
         intent = {"summary": state["change_request"], "target_behavior": state["change_request"],
                   "invariants": [], "search_terms": sorted(set(words))[:20], "ambiguities": []}
-        warnings = [f"interpret step used fallback terms: {describe_error(e)}"]
+        warnings = [f"interpret step used fallback terms: {e}"]
     await store.event(inv, "intent", "orchestrator", intent)
     return {"intent": intent, "warnings": warnings}
 
@@ -119,20 +119,50 @@ async def discover(state: State) -> State:
 
 # --------------------------------------------------------------------------- plan + fan-out
 
+async def gate_hits(state: State) -> dict[str, dict]:
+    """Cheap parallel yes/no check on each keyword hit, used to ORDER seeds, never to hide them.
+
+    Measured on fixture lines (logs/gate_eval.py): Jev and gpt-5-nano both say "no" to about 1 in 4 real
+    dependencies (e.g. a 20-day card-reversal limit that only matters after reasoning about a 30-day window).
+    So "likely" hits are listed first, and screened-out hits stay visible to the agent in a compact list.
+    """
+    question = (f"A developer will implement this change: \"{state['intent']['summary']}\". Could this line of code, "
+                f"config, or text need to change or be affected by it? Lines that merely mention a related word "
+                f"in an unrelated sense are not affected.")
+    gated: dict[str, dict] = {}
+    for repo, hits in state["discovery"].items():
+        hits = hits[:GATE_MAX_HITS_PER_REPO]
+        answers = await router.ask_bool_many(question, [f"{repo}/{h['path']}:{h['line']}: {h['text']}" for h in hits],
+                                             prompt_version="seed-gate-v1")
+        likely = [h for h, a in zip(hits, answers) if a is None or a.answer]  # unanswered counts as likely
+        screened = [h for h, a in zip(hits, answers) if a is not None and not a.answer]
+        gated[repo] = {"likely": likely, "screened": screened}
+    await store.event(state["investigation_id"], "seed_gate", "orchestrator", {
+        repo: {"hits": len(g["likely"]) + len(g["screened"]), "likely": len(g["likely"]), "screened": len(g["screened"])}
+        for repo, g in gated.items()})
+    return gated
+
+
 async def plan(state: State) -> State:
+    router.current_investigation.set(state["investigation_id"])
     await store.set_status(state["investigation_id"], "INVESTIGATING")
+    gated = await gate_hits(state)
     tasks = []
     for i, repo in enumerate(state["repositories"], start=1):
-        hits = state["discovery"].get(repo, [])[:SEED_HITS_PER_REPO]
-        seed = "\n".join(f"- {h['path']}:{h['line']} [{h['term']}] {h['text']}" for h in hits) or "- (no hits)"
-        task = (f"Determine what in {repo} must change, or could break, for this change. "
-                f"Keyword search found these candidate lines (may be incomplete or irrelevant):\n{seed}\n"
-                f"Look beyond these hits for equivalent representations the keyword search could miss.")
+        g = gated.get(repo, {"likely": [], "screened": []})
+        likely = "\n".join(f"- {h['path']}:{h['line']} {h['text']}" for h in g["likely"][:SEED_HITS_PER_REPO])
+        screened = ", ".join(sorted({f"{h['path']}:{h['line']}" for h in g["screened"]})[:20])
+        task = (f"Determine what in {repo} must change, or could break, for this change.\n"
+                f"Keyword search found these lines; a quick screen rated them likely relevant:\n{likely or '- (none)'}\n"
+                + (f"The quick screen rated these unlikely (it misses about 1 in 4 real dependencies, so check any "
+                   f"that look suspicious): {screened}\n" if screened else "")
+                + "Look beyond these hits for equivalent representations the keyword search could miss.")
         tasks.append({"task_id": f"task_{i}", "repo": repo, "task": task, "context": [], "round": "plan",
                       "from_agent": "orchestrator"})
     for t in tasks:
         await store.event(state["investigation_id"], "task_planned", t["repo"],
-                          {"task_id": t["task_id"], "round": "plan", "seed_hits": len(state["discovery"].get(t["repo"], []))})
+                          {"task_id": t["task_id"], "round": "plan",
+                           "seed_hits": len(gated.get(t["repo"], {}).get("likely", []))})
     return {"tasks": tasks}
 
 
@@ -394,9 +424,10 @@ async def report(state: State) -> State:
         for f in findings)
     cross = [e for e in state["impact_graph"]["edges"] if e["type"] in ("references", "consumed_by")]
     narrative, warnings = None, []
+    router.current_investigation.set(inv)
     try:
-        resp = await client.beta.messages.parse(
-            **COMMON, max_tokens=16000, output_format=Report, output_config={"effort": "medium"},
+        resp = await router.reason(
+            parse_as=Report, max_tokens=16000, output_config={"effort": "medium"},
             messages=[{"role": "user", "content": REPORT_PROMPT.format(
                 request=state["change_request"], intent=state["intent"], findings=compact or "(none)",
                 edges=cross, unrouted=state.get("unrouted_questions", []), agent_questions=agent_questions,
@@ -411,8 +442,8 @@ async def report(state: State) -> State:
                 item["speculative"] = not item["finding_ids"] or statuses <= {"inferred", "unverified"}
                 if bad:
                     item["dropped_citations"] = bad
-    except (anthropic.APIError, AttributeError) as e:
-        warnings.append(f"report narrative unavailable: {describe_error(e)}")
+    except (router.RouterError, router.BudgetExceeded, AttributeError) as e:
+        warnings.append(f"report narrative unavailable: {e}")
 
     status = "partial" if missing else (
         "completed_with_open_questions" if (narrative and narrative["open_questions"]) or agent_questions
@@ -447,7 +478,8 @@ async def report(state: State) -> State:
 
 
 async def finalize(state: State) -> State:
-    rep = state["report"]
+    rep = dict(state["report"])
+    rep["cost"] = await router.usage_summary(state["investigation_id"])  # every tier, every agent
     await store.set_status(state["investigation_id"], "PARTIAL" if rep["status"] == "partial" else "COMPLETED",
                            report=rep)
     return {}
