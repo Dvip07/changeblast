@@ -96,21 +96,12 @@ async def interpret(state: State) -> State:
 # --------------------------------------------------------------------------- discover (deterministic)
 
 async def discover(state: State) -> State:
-    discovery: dict[str, list] = {}
-    for repo in state["repositories"]:
-        hits, seen = [], set()
-        for term in state["intent"]["search_terms"]:
-            if len(term.strip()) < 2:
-                continue
-            for h in repos.search(repo, term)["hits"]:
-                key = (h["path"], h["line"])
-                if key not in seen:
-                    seen.add(key)
-                    hits.append({"term": term, **h})
-        discovery[repo] = hits
+    # One combined pattern per repo, capped, so large repos (ERPNext: 5.8k files) stay fast and the
+    # checkpointed state stays small.
+    discovery = {repo: repos.search_terms(repo, state["intent"]["search_terms"]) for repo in state["repositories"]}
     # Baseline for comparison: grep only for numbers and identifiers literally written in the request.
     literals = set(re.findall(r"\b\d+\b|\b[a-z]+(?:_[a-z]+)+\b", state["change_request"]))
-    baseline = {repo: sorted({h["path"] for t in literals for h in repos.search(repo, t)["hits"]})
+    baseline = {repo: sorted({h["path"] for h in repos.search_terms(repo, list(literals))})
                 for repo in state["repositories"]}
     await store.event(state["investigation_id"], "discovery", "orchestrator", {
         repo: {"hits": len(h), "files": sorted({x["path"] for x in h})} for repo, h in discovery.items()})

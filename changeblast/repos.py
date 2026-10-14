@@ -64,13 +64,53 @@ def list_files(repo: str, sha: str | None = None) -> tuple[str, ...]:
     return tuple(f for f in files if not SECRET_PATTERNS.search(f) and not f.endswith(".gitignore"))
 
 
-@lru_cache(maxsize=512)
+BINARY_EXT = {".png", ".jpg", ".jpeg", ".gif", ".ico", ".webp", ".pdf", ".zip", ".gz", ".tar", ".woff", ".woff2",
+              ".ttf", ".eot", ".otf", ".mp4", ".mp3", ".wav", ".jar", ".so", ".dylib", ".exe", ".bin", ".db",
+              ".sqlite", ".xlsx", ".xls", ".docx", ".pptx", ".pyc"}
+MAX_TEXT_BYTES = 512 * 1024
+
+
+def _is_text(path: str, data: bytes) -> bool:
+    return Path(path).suffix.lower() not in BINARY_EXT and len(data) <= MAX_TEXT_BYTES and b"\x00" not in data[:8192]
+
+
+@lru_cache(maxsize=8)
+def text_files(repo: str, sha: str) -> dict[str, tuple[str, ...]]:
+    """Every text file at the commit, read once through a streamed `git cat-file --batch`.
+    Binary and oversized files are left out (they used to crash search with UnicodeDecodeError)."""
+    tree = _git(repo, "ls-tree", "-r", "-l", sha)
+    wanted = []
+    for line in tree.splitlines():
+        meta, path = line.split("\t", 1)
+        _mode, kind, blob, size = meta.split()
+        if kind == "blob" and not SECRET_PATTERNS.search(path) and Path(path).suffix.lower() not in BINARY_EXT \
+                and size != "-" and int(size) <= MAX_TEXT_BYTES:
+            wanted.append((path, blob))
+    proc = subprocess.Popen(["git", "-C", str(repo_root(repo)), "cat-file", "--batch"],
+                            stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+    out = {}
+    for path, blob in wanted:  # one request, one read (writing all ids first deadlocks on big repos)
+        proc.stdin.write(blob.encode() + b"\n")
+        proc.stdin.flush()
+        size = int(proc.stdout.readline().split()[2])
+        data = proc.stdout.read(size)
+        proc.stdout.read(1)
+        if _is_text(path, data):
+            out[path] = tuple(data.decode("utf-8", "replace").splitlines())
+    proc.stdin.close()
+    proc.wait()
+    return out
+
+
 def file_lines(repo: str, path: str, sha: str | None = None) -> tuple[str, ...]:
     sha = sha or head_sha(repo)
     path = _check_path(path)
     if path not in list_files(repo, sha):
         raise RepoError(f"file not found in {repo}@{sha[:7]}: {path}")
-    return tuple(_git(repo, "show", f"{sha}:{path}").splitlines())
+    lines = text_files(repo, sha).get(path)
+    if lines is None:
+        raise RepoError(f"not a text file (binary or over 512 KB): {path}")
+    return lines
 
 
 def read_file(repo: str, path: str, start: int = 1, end: int | None = None) -> dict:
@@ -85,21 +125,40 @@ def read_file(repo: str, path: str, start: int = 1, end: int | None = None) -> d
 
 
 def search(repo: str, query: str, regex: bool = False, path_glob: str | None = None) -> dict:
-    """Case-insensitive literal (or regex) search across the repo at its pinned commit."""
+    """Case-insensitive literal (or regex) search across the repo's text files at its pinned commit."""
     try:
         pattern = re.compile(query if regex else re.escape(query), re.IGNORECASE)
     except re.error as e:
         raise RepoError(f"invalid regex: {e}") from None
     hits = []
-    for path in list_files(repo):
+    for path, lines in text_files(repo, head_sha(repo)).items():
         if path_glob and not Path(path).match(path_glob):
             continue
-        for i, line in enumerate(file_lines(repo, path), start=1):
+        for i, line in enumerate(lines, start=1):
             if pattern.search(line):
                 hits.append({"path": path, "line": i, "text": line.strip()[:200]})
                 if len(hits) >= MAX_SEARCH_RESULTS:
                     return {"repo": repo, "commit": head_sha(repo), "query": query, "hits": hits, "truncated": True}
     return {"repo": repo, "commit": head_sha(repo), "query": query, "hits": hits, "truncated": False}
+
+
+def search_terms(repo: str, terms: list[str], max_hits: int = 300) -> list[dict]:
+    """All terms in one pass (one combined pattern), each hit tagged with the term that matched."""
+    terms = sorted({t.strip() for t in terms if len(t.strip()) >= 2}, key=len, reverse=True)
+    if not terms:
+        return []
+    by_lower = {t.lower(): t for t in terms}
+    pattern = re.compile("|".join(re.escape(t) for t in terms), re.IGNORECASE)
+    hits = []
+    for path, lines in text_files(repo, head_sha(repo)).items():
+        for i, line in enumerate(lines, start=1):
+            m = pattern.search(line)
+            if m:
+                hits.append({"term": by_lower.get(m.group(0).lower(), m.group(0)), "path": path, "line": i,
+                             "text": line.strip()[:200]})
+                if len(hits) >= max_hits:
+                    return hits
+    return hits
 
 
 def _norm(s: str) -> str:

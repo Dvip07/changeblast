@@ -11,7 +11,7 @@ const SCENARIOS = [
   { label: "C. Customer-facing copy", text: "Update every customer-facing message that describes the refund window so it says 30 days." },
 ];
 
-type Repo = { name: string; commit: string; files: number };
+type Repo = { name: string; commit: string; files: number; kind: "fixture" | "cloned" };
 type Recent = { id: string; change_request: string; status: string; created_at: string };
 
 export default function Setup() {
@@ -25,7 +25,7 @@ export default function Setup() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    api<Repo[]>("/repositories").then((r) => { setRepos(r); setSelected(r.map((x) => x.name)); }).catch((e) => setError(e.message));
+    api<Repo[]>("/repositories").then((r) => { setRepos(r); setSelected(r.filter((x) => x.kind === "fixture").map((x) => x.name)); }).catch((e) => setError(e.message));
     api<Recent[]>("/investigations").then(setRecent).catch(() => {});
   }, []);
 
@@ -64,7 +64,8 @@ export default function Setup() {
           <label key={r.name} className="row" style={{ marginBottom: 4 }}>
             <input type="checkbox" checked={selected.includes(r.name)} onChange={() => toggle(r.name)} />
             <b>{r.name}</b> <code className="muted">@{r.commit.slice(0, 7)}</code>
-            <span className="muted">{r.files} files</span>
+            <span className="muted">{r.files.toLocaleString()} files</span>
+            {r.kind === "cloned" && <span className="badge">GitHub clone</span>}
           </label>
         ))}
         <h2 style={{ marginTop: 16 }}>Constraints</h2>

@@ -86,3 +86,4 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const TERMINAL = ["COMPLETED", "PARTIAL", "FAILED"];
 export const STAGES = ["CREATED", "INDEXING", "INVESTIGATING", "RECONCILING", "REPORTING", "COMPLETED"];
+// RESUMING is transient: the next graph node sets the real stage within seconds.

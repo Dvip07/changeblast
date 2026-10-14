@@ -10,6 +10,7 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from pydantic import BaseModel, Field
 
 from changeblast import graph as workflow, indexer, repos, router, store
+from changeblast.config import ROOT
 from changeblast.export import to_markdown
 
 log = logging.getLogger("changeblast")
@@ -66,8 +67,9 @@ class NewInvestigation(BaseModel):
 
 @app.get("/api/repositories")
 def list_repositories():
-    return [{"name": r, "commit": repos.head_sha(r), "files": len(repos.list_files(r))}
-            for r in repos.available_repos()]
+    fixtures = {p.name for p in (ROOT / "fixtures").iterdir() if p.is_dir()}
+    return [{"name": r, "commit": repos.head_sha(r), "files": len(repos.list_files(r)),
+             "kind": "fixture" if r in fixtures else "cloned"} for r in repos.available_repos()]
 
 
 indexing: dict[str, asyncio.Task] = {}
@@ -189,6 +191,7 @@ async def resume(inv_id: str):
     snap = await graph.aget_state(cfg(inv_id))
     if snap.next:  # crashed or stopped mid-graph: continue from the last checkpoint
         await store.event(inv_id, "resume", "orchestrator", {"from": list(snap.next)})
+        await store.set_status(inv_id, "RESUMING")  # don't keep showing FAILED while it runs again
         start(inv_id, None)
         return {"investigation_id": inv_id, "resumed_from": list(snap.next)}
     if inv["status"] == "PARTIAL":  # finished with failed agents: retry only those, then re-reconcile

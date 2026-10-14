@@ -41,7 +41,7 @@ code { word-break: break-all; }
 .s-verified, .s-COMPLETED, .s-completed { background: var(--ok-soft); color: var(--ok); }
 .s-inferred, .s-PARTIAL, .s-partial, .s-completed_with_open_questions { background: var(--warn-soft); color: var(--warn); }
 .s-unverified, .s-FAILED, .s-failed { background: var(--bad-soft); color: var(--bad); }
-.s-running, .s-INDEXING, .s-INVESTIGATING, .s-RECONCILING, .s-REPORTING, .s-CREATED { background: var(--accent-soft); color: var(--accent); }
+.s-running, .s-RESUMING, .s-INDEXING, .s-INVESTIGATING, .s-RECONCILING, .s-REPORTING, .s-CREATED { background: var(--accent-soft); color: var(--accent); }
 .l-must_change { background: #fde7e4; color: #a3271a; }
 .l-may_break { background: var(--warn-soft); color: var(--warn); }
 .l-reviewed_no_change { background: var(--soft); color: var(--muted); }
