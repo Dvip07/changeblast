@@ -1,0 +1,8 @@
+services:
+  postgres:
+    image: postgres:16
+    environment: { POSTGRES_PASSWORD: dev, POSTGRES_DB: changeblast }
+    ports: ["5433:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+volumes:
+  pgdata:

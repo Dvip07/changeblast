@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GatewayRefundRequest",
+  "description": "Request body sent to the card gateway's /reversals endpoint.",
+  "type": "object",
+  "required": ["charge_id", "amount_cents", "currency", "idempotency_key"],
+  "properties": {
+    "charge_id": { "type": "string" },
+    "amount_cents": { "type": "integer", "minimum": 1 },
+    "currency": { "type": "string", "minLength": 3, "maxLength": 3 },
+    "idempotency_key": { "type": "string", "maxLength": 255 }
+  }
+}

@@ -1,0 +1,45 @@
+openapi: 3.0.3
+info:
+  title: Billing Service
+  version: 2.4.0
+paths:
+  /subscriptions/{subscriptionId}/refund-eligibility:
+    get:
+      summary: Check whether a subscription can be refunded
+      description: Refunds are available within 14 days of purchase.
+      parameters:
+        - name: subscriptionId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Eligibility result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RefundEligibility" }
+  /refunds:
+    post:
+      summary: Request a refund
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [subscription_id, reason]
+              properties:
+                subscription_id: { type: string }
+                reason: { type: string, enum: [not_needed, too_expensive, missing_feature, other] }
+      responses:
+        "202": { description: Refund approved and queued for payment }
+        "409": { description: Not eligible (reason in body) }
+components:
+  schemas:
+    RefundEligibility:
+      type: object
+      required: [eligible, reason, days_remaining]
+      properties:
+        eligible: { type: boolean }
+        reason: { type: string, enum: [eligible, outside_window, already_refunded] }
+        days_remaining: { type: integer, minimum: 0, maximum: 14 }

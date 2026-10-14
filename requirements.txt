@@ -1,0 +1,11 @@
+anthropic==1.14.0
+langgraph==1.2.15
+langgraph-checkpoint-postgres==3.2.0
+psycopg[binary,pool]==3.3.6
+fastapi
+uvicorn
+httpx
+a2a-sdk[http-server]==1.2.2
+mcp==2.3.0
+pydantic
+python-dotenv

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.internal/events/billing.refund.approved/v1",
+  "title": "RefundApproved",
+  "description": "Published on topic billing.refund.approved when a refund passes eligibility checks.",
+  "type": "object",
+  "required": [
+    "refund_id",
+    "subscription_id",
+    "customer_id",
+    "charge_id",
+    "refund_amount_cents",
+    "currency",
+    "reason",
+    "purchased_at",
+    "approved_at",
+    "idempotency_key"
+  ],
+  "properties": {
+    "refund_id": { "type": "string", "pattern": "^rf_" },
+    "subscription_id": { "type": "string" },
+    "customer_id": { "type": "string" },
+    "charge_id": { "type": "string" },
+    "refund_amount_cents": { "type": "integer", "minimum": 1 },
+    "currency": { "type": "string", "minLength": 3, "maxLength": 3 },
+    "reason": { "type": "string", "enum": ["not_needed", "too_expensive", "missing_feature", "other"] },
+    "purchased_at": { "type": "string", "format": "date-time" },
+    "approved_at": { "type": "string", "format": "date-time" },
+    "idempotency_key": { "type": "string" }
+  },
+  "additionalProperties": false
+}
