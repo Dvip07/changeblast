@@ -6,12 +6,13 @@ re-verifies every citation, so nothing the agent says is shown as fact on its wo
 """
 import asyncio
 import json
+import os
 import sys
 
 from mcp import Client, StdioServerParameters
 
 from changeblast import repos, router
-from changeblast.config import AGENT_MAX_TOOL_CALLS, ROOT
+from changeblast.config import AGENT_MAX_TOOL_CALLS, DATABASE_URL, FIXTURES_DIR, ROOT
 
 
 class LLMUnavailable(Exception):
@@ -113,9 +114,17 @@ How to work:
 - Budget: at most {max_calls} tool calls. Finish by calling submit_findings exactly once."""
 
 
+# The MCP SDK starts servers with a minimal environment, so pass what the repo tools need explicitly.
+# API keys are deliberately not passed: the code-reading server has no reason to hold them.
+_MCP_ENV_KEYS = ("PATH", "HOME", "LANG", "FIXTURES_DIR", "DATABASE_URL", "PYTHONPATH")
+
+
 def _mcp_server(repo: str, scope: str = "") -> StdioServerParameters:
+    env = {k: os.environ[k] for k in _MCP_ENV_KEYS if k in os.environ}
+    env.setdefault("FIXTURES_DIR", FIXTURES_DIR)
+    env.setdefault("DATABASE_URL", DATABASE_URL)
     return StdioServerParameters(command=sys.executable, args=["-m", "changeblast.mcp_repo_server", repo, scope],
-                                 cwd=str(ROOT))
+                                 cwd=str(ROOT), env=env)
 
 
 async def investigate(repo: str, change_request: str, task: str, context: list[str] | None = None,

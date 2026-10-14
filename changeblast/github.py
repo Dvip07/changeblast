@@ -134,7 +134,7 @@ def clone_at(owner: str, repo: str, sha: str, token: str | None) -> dict:
     finally:
         if tmp.exists():
             shutil.rmtree(tmp, ignore_errors=True)
-    for fn in (repos.head_sha, repos.list_files, repos.text_files):
+    for fn in (repos.list_files, repos.text_files):  # keyed by SHA; cleared to free memory
         fn.cache_clear()
     return {"name": name, "files": len(sizes), "bytes": sum(sizes)}
 

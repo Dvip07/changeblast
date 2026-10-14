@@ -18,6 +18,9 @@ GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 OPENROUTER_CONCURRENCY = int(os.getenv("OPENROUTER_CONCURRENCY", "20"))
 ANTHROPIC_CONCURRENCY = int(os.getenv("ANTHROPIC_CONCURRENCY", "6"))
 DAILY_LIMIT_USD = float(os.getenv("DAILY_LIMIT_USD", "15"))
+# Required to start investigations, add repositories, or resume runs. Reading reports stays public.
+# Empty = no check (local development only).
+ACCESS_CODE = os.getenv("ACCESS_CODE", "")
 # Claude Sonnet 5.5, USD per 1M tokens (cache write = 5-minute TTL, 1.25x input).
 ANTHROPIC_PRICES = {"input": 2.00, "output": 10.00, "cache_read": 0.20, "cache_write": 2.50}
 

@@ -1,0 +1,8 @@
+.venv
+.env
+repos
+logs
+web
+.git
+**/__pycache__
+.claude

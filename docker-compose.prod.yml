@@ -1,0 +1,47 @@
+# Production stack: one EC2 host. Only Caddy is reachable from outside (80/443).
+services:
+  postgres:
+    image: postgres:16
+    environment: { POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set in .env}", POSTGRES_DB: changeblast }
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck: { test: ["CMD", "pg_isready", "-U", "postgres"], interval: 5s, retries: 20 }
+    restart: unless-stopped
+
+  api:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: "postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/changeblast"
+      AGENT_HOST_URL: http://agents:9300
+    volumes: ["data:/data"]
+    depends_on: { postgres: { condition: service_healthy } }
+    restart: unless-stopped
+
+  agents:
+    build: .
+    command: ["uvicorn", "changeblast.agent_host:app", "--host", "0.0.0.0", "--port", "9300"]
+    env_file: .env
+    environment:
+      DATABASE_URL: "postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/changeblast"
+      AGENT_HOST_URL: http://agents:9300
+    volumes: ["data:/data"]
+    depends_on: { postgres: { condition: service_healthy } }
+    restart: unless-stopped
+
+  web:
+    build: { context: ./web, args: { API_URL: "http://api:8100" } }
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    environment: { DOMAIN: "${DOMAIN:-:80}" }
+    ports: ["${HTTP_PORT:-80}:80", "443:443"]
+    volumes: ["./deploy/Caddyfile:/etc/caddy/Caddyfile:ro", "caddy_data:/data", "caddy_config:/config"]
+    depends_on: [api, web]
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  data:
+  caddy_data:
+  caddy_config:

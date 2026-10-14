@@ -1,0 +1,17 @@
+# DOMAIN=changeblast.dvip.dev gets automatic HTTPS; DOMAIN=:80 serves plain HTTP (before DNS is ready).
+{$DOMAIN} {
+	encode gzip
+	# Long-running API calls go straight to FastAPI; everything else is the Next.js app.
+	handle /api/* {
+		reverse_proxy api:8100
+	}
+	handle {
+		reverse_proxy web:3100
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+}

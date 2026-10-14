@@ -31,7 +31,9 @@ def _git(repo: str, *args: str) -> str:
 
 def available_repos() -> list[str]:
     """The allowlist: only directories under fixtures/ that are git repositories."""
-    return sorted(p.name for p in Path(FIXTURES_DIR).iterdir() if (p / ".git").is_dir())
+    # Hidden names are excluded: in-progress GitHub clones live in .tmp-* until they're complete.
+    return sorted(p.name for p in Path(FIXTURES_DIR).iterdir()
+                  if not p.name.startswith(".") and (p / ".git").is_dir())
 
 
 def repo_root(repo: str) -> Path:
@@ -40,8 +42,8 @@ def repo_root(repo: str) -> Path:
     return Path(FIXTURES_DIR) / repo
 
 
-@lru_cache(maxsize=64)
 def head_sha(repo: str) -> str:
+    # Not cached: a re-ingested GitHub repo gets a new commit, and the API and agent host must agree.
     return _git(repo, "rev-parse", "HEAD").strip()
 
 

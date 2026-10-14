@@ -75,6 +75,20 @@ Open http://localhost:3100, pick a seeded scenario, and run it. An investigation
 
 `scripts/build_repos.sh` turns each `fixtures/<name>` into its own git repo with a fixed author and timestamp, so commit SHAs are identical on every machine.
 
+## Deploy (AWS)
+
+One EC2 host running docker compose with Postgres, the API, the agent host, the web app, and Caddy for automatic HTTPS. Only ports 80 and 443 are open. There's no SSH: the host is managed through SSM Session Manager.
+
+```bash
+./deploy/put_secrets.sh      # copies keys from .env into SSM Parameter Store (encrypted), prints the access code
+./deploy/aws_setup.sh        # IAM role, security group, t3.large, 40 GB disk, Elastic IP (safe to re-run)
+# add a DNS A record for the domain pointing at the Elastic IP; Caddy then gets the certificate
+```
+
+To redeploy after pushing to `main`, run `deploy/start.sh` on the host via SSM. It pulls the code, rewrites `.env` from SSM, and rebuilds.
+
+Running investigations, adding repositories, and resuming runs need the access code (`X-Access-Code` header; the UI asks for it once). Reports, agent cards, and the README are public. Spend is capped at `DAILY_LIMIT_USD` (default $15/day).
+
 ## API
 
 | Method | Path | |

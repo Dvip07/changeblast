@@ -76,8 +76,29 @@ export type Investigation = {
 export type InvEvent = { id: number; type: string; agent: string | null; payload: Record<string, any>; created_at: string };
 export type EvidenceView = { finding: Finding; lines: { n: number; text: string; cited: boolean }[] };
 
-export async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`/api${path}`, { ...init, headers: { "Content-Type": "application/json", ...init?.headers }, cache: "no-store" });
+const CODE_KEY = "changeblast-access-code";
+
+export function getAccessCode(): string {
+  try { return localStorage.getItem(CODE_KEY) ?? ""; } catch { return ""; }
+}
+
+export function setAccessCode(code: string): void {
+  try { localStorage.setItem(CODE_KEY, code); } catch { /* private mode: code lasts for this page only */ }
+}
+
+export async function api<T>(path: string, init?: RequestInit, retried = false): Promise<T> {
+  const res = await fetch(`/api${path}`, {
+    ...init,
+    headers: { "Content-Type": "application/json", "X-Access-Code": getAccessCode(), ...init?.headers },
+    cache: "no-store",
+  });
+  if (res.status === 401 && !retried && typeof window !== "undefined") {
+    const code = window.prompt("This action needs the access code you were given:");
+    if (code) {
+      setAccessCode(code.trim());
+      return api<T>(path, init, true);
+    }
+  }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(typeof body.detail === "string" ? body.detail : res.statusText);

@@ -11,7 +11,11 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from pydantic import BaseModel, Field, SecretStr
 
 from changeblast import github, graph as workflow, indexer, repos, router, store
-from changeblast.config import ROOT
+import hmac
+
+from fastapi import Depends
+
+from changeblast.config import ACCESS_CODE, ROOT
 from changeblast.export import to_markdown
 
 log = logging.getLogger("changeblast")
@@ -32,6 +36,17 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="ChangeBlast", lifespan=lifespan)
+
+
+def require_access_code(x_access_code: str | None = Header(default=None)) -> None:
+    """Spending actions need the shared access code; constant-time compare."""
+    if ACCESS_CODE and not hmac.compare_digest((x_access_code or "").encode(), ACCESS_CODE.encode()):
+        raise HTTPException(401, "access code required to run investigations or add repositories")
+
+
+@app.get("/api/health")
+async def health():
+    return {"ok": True, "access_code_required": bool(ACCESS_CODE)}
 
 
 def cfg(inv_id: str) -> dict:
@@ -110,7 +125,7 @@ async def _run_ingest(ingest_id: str, url: str, token: str | None) -> None:
         token = None  # noqa: F841 - drop the reference as soon as the clone is done
 
 
-@app.post("/api/repositories", status_code=202)
+@app.post("/api/repositories", status_code=202, dependencies=[Depends(require_access_code)])
 async def add_repository(body: NewRepository):
     try:
         github.parse_url(body.url)
@@ -157,7 +172,7 @@ async def get_repo_index(repo: str):
     raise HTTPException(404, "not indexed yet; POST to this URL to build the index")
 
 
-@app.post("/api/repositories/{repo}/index", status_code=202)
+@app.post("/api/repositories/{repo}/index", status_code=202, dependencies=[Depends(require_access_code)])
 async def build_repo_index(repo: str, force: bool = False):
     if repo not in repos.available_repos():
         raise HTTPException(404, "repository not in allowlist")
@@ -166,7 +181,7 @@ async def build_repo_index(repo: str, force: bool = False):
     return {"repo": repo, "status": "indexing"}
 
 
-@app.post("/api/investigations", status_code=202)
+@app.post("/api/investigations", status_code=202, dependencies=[Depends(require_access_code)])
 async def create_investigation(body: NewInvestigation, idempotency_key: str | None = Header(default=None)):
     allowed = set(repos.available_repos())
     unknown = [r for r in body.repositories if r not in allowed]
@@ -255,7 +270,7 @@ async def get_evidence(inv_id: str, finding_id: str, context: int = 4):
                                     for i in range(start, end + 1)]}
 
 
-@app.post("/api/investigations/{inv_id}/resume", status_code=202)
+@app.post("/api/investigations/{inv_id}/resume", status_code=202, dependencies=[Depends(require_access_code)])
 async def resume(inv_id: str):
     inv = await _get(inv_id)
     snap = await graph.aget_state(cfg(inv_id))
