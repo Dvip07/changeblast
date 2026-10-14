@@ -5,57 +5,156 @@
       "title": "Policy change: 14 to 30 days plus 50% credit threshold",
       "change_request": "Increase refund eligibility from 14 to 30 days. Customers who have consumed over 50% of subscription credits remain ineligible. Preserve existing API compatibility.",
       "required": [
-        {"repo": "billing-service", "path": "src/refunds/policy.py", "why": "REFUND_WINDOW_DAYS = 14 and is_refund_eligible"},
-        {"repo": "billing-service", "path": "src/subscriptions/credits.py", "why": "credit_usage_ratio is the input for the new 50% rule"},
-        {"repo": "billing-service", "path": "openapi.yaml", "why": "description says 14 days; days_remaining maximum: 14; reason enum lacks a credits value"},
-        {"repo": "billing-service", "path": "tests/test_refund_policy.py", "why": "boundary tests at 13/15 days"},
-        {"repo": "billing-service", "path": "src/reports/refund_metrics.sql", "why": "INTERVAL '336 hours' = 14 days (literal search for 14 misses it)"},
-        {"repo": "checkout-web", "path": "src/components/RefundEligibility.tsx", "why": "REFUND_WINDOW_MS = 1_209_600_000 = 14 days; would hide the button on days 15-30"},
-        {"repo": "checkout-web", "path": "src/api/refunds.ts", "why": "reason union must accept the new ineligibility reason"},
-        {"repo": "notification-service", "path": "templates/refund_approved.html", "why": "'within two weeks of purchase' copy"},
-        {"repo": "notification-service", "path": "templates/refund_denied.html", "why": "'14-day refund window' copy"},
-        {"repo": "payments-service", "path": "src/refunds/processor.py", "why": "CARD_REVERSAL_MAX_AGE = 20 days: refunds on days 21-30 become account credit + manual payout"}
+        {
+          "repo": "billing-service",
+          "path": "src/refunds/policy.py",
+          "why": "REFUND_WINDOW_DAYS = 14 and is_refund_eligible"
+        },
+        {
+          "repo": "billing-service",
+          "path": "src/subscriptions/credits.py",
+          "why": "credit_usage_ratio is the input for the new 50% rule"
+        },
+        {
+          "repo": "billing-service",
+          "path": "openapi.yaml",
+          "why": "description says 14 days; days_remaining maximum: 14; reason enum lacks a credits value"
+        },
+        {
+          "repo": "billing-service",
+          "path": "tests/test_refund_policy.py",
+          "why": "boundary tests at 13/15 days"
+        },
+        {
+          "repo": "billing-service",
+          "path": "src/reports/refund_metrics.sql",
+          "why": "INTERVAL '336 hours' = 14 days (literal search for 14 misses it)"
+        },
+        {
+          "repo": "checkout-web",
+          "path": "src/components/RefundEligibility.tsx",
+          "why": "REFUND_WINDOW_MS = 1_209_600_000 = 14 days; would hide the button on days 15-30"
+        },
+        {
+          "repo": "checkout-web",
+          "path": "src/api/refunds.ts",
+          "why": "reason union must accept the new ineligibility reason"
+        },
+        {
+          "repo": "notification-service",
+          "path": "templates/refund_approved.html",
+          "why": "'within two weeks of purchase' copy"
+        },
+        {
+          "repo": "notification-service",
+          "path": "templates/refund_denied.html",
+          "why": "'14-day refund window' copy"
+        },
+        {
+          "repo": "payments-service",
+          "path": "src/refunds/processor.py",
+          "why": "CARD_REVERSAL_MAX_AGE = 20 days: refunds on days 21-30 become account credit + manual payout"
+        }
       ],
       "optional": [
-        {"repo": "billing-service", "path": "src/refunds/service.py"},
-        {"repo": "checkout-web", "path": "tests/refund-eligibility.test.ts"},
-        {"repo": "payments-service", "path": "tests/test_refund_idempotency.py"}
+        {
+          "repo": "billing-service",
+          "path": "src/refunds/service.py"
+        },
+        {
+          "repo": "checkout-web",
+          "path": "tests/refund-eligibility.test.tsx"
+        },
+        {
+          "repo": "payments-service",
+          "path": "tests/test_refund_idempotency.py"
+        }
       ],
       "distractors": [
-        {"repo": "payments-service", "path": "contracts/refund-request.schema.json"}
+        {
+          "repo": "payments-service",
+          "path": "contracts/refund-request.schema.json"
+        }
       ]
     },
     "B": {
       "title": "Breaking event change: rename refund_amount_cents to amount",
       "change_request": "Rename the refund_amount_cents field in the RefundApproved event to amount.",
       "required": [
-        {"repo": "shared-contracts", "path": "events/refund-approved.schema.json", "why": "field definition; additionalProperties false; versioning rules require /v2"},
-        {"repo": "billing-service", "path": "src/refunds/service.py", "why": "producer sets refund_amount_cents"},
-        {"repo": "payments-service", "path": "src/events/consumer.py", "why": "reads event['refund_amount_cents']"},
-        {"repo": "notification-service", "path": "src/consumers/refund_events.py", "why": "reads event['refund_amount_cents']"},
-        {"repo": "notification-service", "path": "tests/test_refund_notifications.py", "why": "fixture event uses refund_amount_cents"}
+        {
+          "repo": "shared-contracts",
+          "path": "events/refund-approved.schema.json",
+          "why": "field definition; additionalProperties false; versioning rules require /v2"
+        },
+        {
+          "repo": "billing-service",
+          "path": "src/refunds/service.py",
+          "why": "producer sets refund_amount_cents"
+        },
+        {
+          "repo": "payments-service",
+          "path": "src/events/consumer.py",
+          "why": "reads event['refund_amount_cents']"
+        },
+        {
+          "repo": "notification-service",
+          "path": "src/consumers/refund_events.py",
+          "why": "reads event['refund_amount_cents']"
+        },
+        {
+          "repo": "notification-service",
+          "path": "tests/test_refund_notifications.py",
+          "why": "fixture event uses refund_amount_cents"
+        }
       ],
       "optional": [
-        {"repo": "shared-contracts", "path": "README.md"}
+        {
+          "repo": "shared-contracts",
+          "path": "README.md"
+        }
       ],
       "distractors": [
-        {"repo": "payments-service", "path": "contracts/refund-request.schema.json"},
-        {"repo": "billing-service", "path": "src/reports/refund_metrics.sql"}
+        {
+          "repo": "payments-service",
+          "path": "contracts/refund-request.schema.json"
+        },
+        {
+          "repo": "billing-service",
+          "path": "src/reports/refund_metrics.sql"
+        }
       ]
     },
     "C": {
       "title": "Hidden downstream copy: customer-facing refund window text",
       "change_request": "Update every customer-facing message that describes the refund window so it says 30 days.",
       "required": [
-        {"repo": "notification-service", "path": "templates/refund_approved.html", "why": "'two weeks' (no literal 14)"},
-        {"repo": "notification-service", "path": "templates/refund_denied.html", "why": "'14-day refund window'"},
-        {"repo": "billing-service", "path": "openapi.yaml", "why": "public API description 'within 14 days'"}
+        {
+          "repo": "notification-service",
+          "path": "templates/refund_approved.html",
+          "why": "'two weeks' (no literal 14)"
+        },
+        {
+          "repo": "notification-service",
+          "path": "templates/refund_denied.html",
+          "why": "'14-day refund window'"
+        },
+        {
+          "repo": "billing-service",
+          "path": "openapi.yaml",
+          "why": "public API description 'within 14 days'"
+        }
       ],
       "optional": [
-        {"repo": "checkout-web", "path": "src/components/RefundEligibility.tsx"}
+        {
+          "repo": "checkout-web",
+          "path": "src/components/RefundEligibility.tsx"
+        }
       ],
       "distractors": [
-        {"repo": "payments-service", "path": "src/refunds/processor.py"}
+        {
+          "repo": "payments-service",
+          "path": "src/refunds/processor.py"
+        }
       ]
     }
   }

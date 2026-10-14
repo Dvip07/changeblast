@@ -9,7 +9,7 @@ from fastapi.responses import PlainTextResponse
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from pydantic import BaseModel, Field
 
-from changeblast import graph as workflow, repos, router, store
+from changeblast import graph as workflow, indexer, repos, router, store
 from changeblast.export import to_markdown
 
 log = logging.getLogger("changeblast")
@@ -68,6 +68,30 @@ class NewInvestigation(BaseModel):
 def list_repositories():
     return [{"name": r, "commit": repos.head_sha(r), "files": len(repos.list_files(r))}
             for r in repos.available_repos()]
+
+
+indexing: dict[str, asyncio.Task] = {}
+
+
+@app.get("/api/repositories/{repo}/index")
+async def get_repo_index(repo: str):
+    if repo not in repos.available_repos():
+        raise HTTPException(404, "repository not in allowlist")
+    idx = await indexer.get_index(repo)
+    if idx:
+        return idx
+    if repo in indexing and not indexing[repo].done():
+        return {"repo": repo, "status": "indexing"}
+    raise HTTPException(404, "not indexed yet; POST to this URL to build the index")
+
+
+@app.post("/api/repositories/{repo}/index", status_code=202)
+async def build_repo_index(repo: str, force: bool = False):
+    if repo not in repos.available_repos():
+        raise HTTPException(404, "repository not in allowlist")
+    if repo not in indexing or indexing[repo].done():
+        indexing[repo] = asyncio.create_task(indexer.ensure_index(repo, force=force))
+    return {"repo": repo, "status": "indexing"}
 
 
 @app.post("/api/investigations", status_code=202)

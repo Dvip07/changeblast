@@ -144,7 +144,7 @@ Routing is **fixed by task type in code**, not decided by an LLM, so it's predic
 | # | Phase | Result |
 |---|---|---|
 | 1 | Model router + caches + cost tracking | **Done.** $0.47 per run, down from ~$3; see Phase 1 results |
-| 2 | Indexer + quality score on the fixtures and one large open-source repo | The graph exists and is scored |
+| 2 | Indexer + quality score on the fixtures and one large open-source repo | **Done.** ERPNext indexed in 2.4 s, quality 73/100 |
 | 3 | Graph-based candidates + relevance gate + partitioned agents + graph MCP tools | Large repos work |
 | 4 | GitHub ingestion (MCP metadata + clone at SHA) | Real repos |
 | 5 | Access code, spend cap, public pages | Safe to share |
@@ -175,6 +175,37 @@ Router, cost ledger, $15/day cap, result cache, and Anthropic prompt caching are
 
   Both say "no" to the payments 20-day reversal limit. **Decision:** the gate only orders seeds and never removes them; screened-out lines stay visible to agents. Cheap models miss about 1 in 4 real dependencies.
 - **Known gap:** `credits.py` (where the new 50% rule plugs in) is missed in 2 of 3 runs. Agents put the rule in `policy.py` and don't cite the helper it would call.
+
+## Phase 2 results (done, 14 Oct 2026)
+
+The indexer (`changeblast/indexer/`), dependency graph, and quality score are built and tested on the fixtures and ERPNext.
+
+**How it works:**
+- `git ls-tree` at the pinned SHA, then one streamed `git cat-file --batch` read.
+- tree-sitter parsing in a process pool, using tags queries for definitions and references and `process()` for imports.
+- Import resolution for Python, JS/TS and Java. Reference linking within one language family.
+- Bulk `COPY` into Postgres. Cached per `repo@sha`.
+
+**ERPNext** (`frappe/erpnext@6551867`, shallow clone, 184 MB, 23 s; GitHub reports 1.9 GB including history):
+
+| | |
+|---|---|
+| Files | 5,823 (3,856 code, 1,872 text, 95 skipped) |
+| Symbols / edges | 27,385 / 51,137 (resolved 20,879, name_match 6,316, ambiguous 23,942) |
+| Index time | **2.4 s** (8 parse workers) |
+| Quality | **73/100** (Python 74, JS 68, TS 74, TSX 79) |
+| Python | 99.9% of internal imports resolve; 42% of references link to a single definition |
+| Dynamic dispatch | **8,310** calls choose their target from a string (`frappe.get_doc("Sales Invoice")`, `getattr`): not in the graph, covered by text search |
+
+**Bugs found by spot-checking edges, all fixed:**
+- **Cross-language edges:** Python `on` / `submit` linked to JS files. References now link within one language family only.
+- **Test mocks as targets:** a JS test's mocks of `on`, `throw` and `__` became the "only definition" for hundreds of production references; in payments, `processor.py` linked to a test's `MemoryStore.put`. Production code never links into test files now. This removed 29k noisy edges (80,707 → 51,137).
+- **Pipe deadlock:** writing every blob id to `git cat-file` before reading deadlocked on large repos. It now does one request, one read.
+- **TypeScript:** the language pack's TS tags omit the JavaScript base patterns and top-level constants. JS tags plus extra queries are now combined, so `REFUND_WINDOW_MS` is a symbol.
+- **Inflated score:** the first weighting gave ERPNext 86 despite 44% reference linking. Linking is now 45% of the score.
+- **Fixture bug the indexer caught:** a `.ts` test containing JSX, renamed to `.tsx`.
+
+**Known weakness:** `name_match` on method calls (`frm.set_query`) can point at a same-named method that isn't the real target. It's labeled `name_match`, never `resolved`.
 
 ## Decisions (agreed 14 Oct 2026)
 

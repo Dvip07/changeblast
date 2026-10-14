@@ -55,6 +55,36 @@ CREATE TABLE IF NOT EXISTS llm_cache (
   response JSONB NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS code_indexes (
+  id BIGSERIAL PRIMARY KEY,
+  repo TEXT NOT NULL,
+  commit_sha TEXT NOT NULL,
+  status TEXT NOT NULL,
+  stats JSONB,
+  quality JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  finished_at TIMESTAMPTZ,
+  UNIQUE (repo, commit_sha)
+);
+CREATE TABLE IF NOT EXISTS code_files (
+  index_id BIGINT NOT NULL REFERENCES code_indexes(id) ON DELETE CASCADE,
+  path TEXT NOT NULL, language TEXT, category TEXT NOT NULL, loc INT, has_error BOOLEAN,
+  n_defs INT NOT NULL DEFAULT 0, n_refs INT NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS code_files_idx ON code_files (index_id, path);
+CREATE TABLE IF NOT EXISTS code_symbols (
+  index_id BIGINT NOT NULL REFERENCES code_indexes(id) ON DELETE CASCADE,
+  path TEXT NOT NULL, name TEXT NOT NULL, kind TEXT NOT NULL, line_start INT, line_end INT
+);
+CREATE INDEX IF NOT EXISTS code_symbols_name ON code_symbols (index_id, name);
+CREATE INDEX IF NOT EXISTS code_symbols_path ON code_symbols (index_id, path);
+CREATE TABLE IF NOT EXISTS code_edges (
+  index_id BIGINT NOT NULL REFERENCES code_indexes(id) ON DELETE CASCADE,
+  src_path TEXT NOT NULL, dst_path TEXT NOT NULL, kind TEXT NOT NULL, symbol TEXT,
+  confidence TEXT NOT NULL, line INT
+);
+CREATE INDEX IF NOT EXISTS code_edges_dst ON code_edges (index_id, dst_path);
+CREATE INDEX IF NOT EXISTS code_edges_src ON code_edges (index_id, src_path);
 CREATE OR REPLACE FUNCTION events_append_only() RETURNS trigger AS $$
 BEGIN RAISE EXCEPTION 'investigation_events is append-only'; END; $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS events_immutable ON investigation_events;

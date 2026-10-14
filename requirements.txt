@@ -9,3 +9,5 @@ a2a-sdk[http-server]==1.2.2
 mcp==2.3.0
 pydantic
 python-dotenv
+tree-sitter==0.26.0
+tree-sitter-language-pack==1.22.1
